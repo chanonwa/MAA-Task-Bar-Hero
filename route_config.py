@@ -55,10 +55,10 @@ DIFFICULTY_MATCH_THRESHOLD = 0.85
 CHAPTER_MATCH_THRESHOLD = 0.85
 
 DIFFICULTY_DISPLAY_NAMES = {
-    "normal": ("Normal", "普通"),
-    "nightmare": ("Nightmare", "噩梦"),
-    "hell": ("Hell", "地狱"),
-    "torment": ("Torment", "折磨"),
+    "normal": "Normal",
+    "nightmare": "Nightmare",
+    "hell": "Hell",
+    "torment": "Torment",
 }
 
 DEFAULT_SEARCH_ORDER_BY_CHAPTER = {
@@ -170,25 +170,26 @@ def get_chest_level_label(difficulty, level, chapter=None):
 
 
 def build_display_name(difficulty, level):
-    _, difficulty_cn = DIFFICULTY_DISPLAY_NAMES[difficulty]
+    difficulty_name = DIFFICULTY_DISPLAY_NAMES[difficulty]
     chapter_number, _ = level_sort_key(level)
     chest_level = get_chest_level_label(
         difficulty,
         level,
         chapter=f"chapter_{chapter_number}",
     )
+    label = f"{difficulty_name} | Chapter {chapter_number} | Level {level}"
 
     if chest_level is None:
-        return f"{difficulty_cn} | {level}"
+        return label
 
-    return f"{chest_level}级 | {difficulty_cn} | {level}"
+    return f"Level {chest_level} | {label}"
 
 
 def build_available_levels():
     available = []
 
     for difficulty in ["normal", "nightmare", "hell", "torment"]:
-        difficulty_en, _ = DIFFICULTY_DISPLAY_NAMES[difficulty]
+        difficulty_en = DIFFICULTY_DISPLAY_NAMES[difficulty]
 
         for chapter_num in range(1, 4):
             chapter = f"chapter_{chapter_num}"

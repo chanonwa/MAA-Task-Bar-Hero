@@ -45,6 +45,12 @@
     "post_storage_click_wait_seconds": 0.8,
     "auto_switch_stash_when_full": true,
     "max_stash_pages_to_scan": 4,
+    "stack_stash_after_transfer": true,
+    "stash_stack_pages": [
+        "stash_1",
+        "stash_2",
+        "stash_3"
+    ],
     "stash_tab_match_threshold": 0.8,
     "storage_anchor_match_threshold": 0.8,
     "stash_last_slot_blank_threshold": 0.85,
@@ -74,6 +80,6 @@
     "storage_grid_rows": 7,
     "storage_grid_cols": 7,
     "always_save_storage_diagnostics_on_failure": true,
-    "recognition_mode": "aggressive",
+    "recognition_mode": "balanced",
     "same_tier_substitution_enabled": true
 }

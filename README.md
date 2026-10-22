@@ -4,7 +4,7 @@ MAA TaskBar Hero is a visual automation tool designed for the Steam game **TaskB
 
 It uses screenshot analysis and template matching to interpret the game screen, automatically select farming routes, detect boss alerts, identify treasure chest drops, manage storage/stash transfers, and run the farming process in a continuous loop.
 
-The project provides both Chinese and English application GUI packages. The core automation logic is the same between both versions; the main difference is the application interface language.
+This version is English-only: the application GUI is in English, and the visual templates are captured from the English game UI.
 
 Concept and direction by **Marcus-Xu-04**. Built with Codex as a coding assistant. Shared for learning, experimentation, and automation research.
 
@@ -45,20 +45,6 @@ The bot does **not** read game memory, modify game files, intercept network traf
 
 ---
 
-## Package Versions
-
-Two application GUI packages are provided:
-
-* `MAA-Task-Bar-Hero-v1.3.0-CN.zip`
-  Chinese application GUI.
-
-* `MAA-Task-Bar-Hero-v1.3.0-EN.zip`
-  English application GUI.
-
-Both packages use the same backend automation logic. Bug fixes and core behavior changes apply to both versions unless stated otherwise.
-
----
-
 ## Important Setup Requirement
 
 Please keep the game at **1x / 100% zoom**.
@@ -71,17 +57,16 @@ Multi-monitor setups, negative-coordinate monitor layouts, and high-resolution d
 
 ## Language and Template Support
 
-The application GUI is available in Chinese and English packages.
+The application GUI is in English, and the templates in `templates/` are captured from the **English** game UI, so set the game language to English.
 
-Game UI compatibility depends on the visual templates included in the package. MAA TaskBar Hero relies on screenshot templates for difficulty buttons, chapter tabs, level labels, boss warnings, chest drops, storage/backpack buttons, stash tabs, and other UI elements.
+MAA TaskBar Hero relies on screenshot templates for difficulty buttons, chapter tabs, level labels, boss warnings, chest drops, storage/backpack buttons, stash tabs, and other UI elements. If the game UI uses a different language, the templates inside the `templates/` folder need to be replaced.
 
-If the game UI language uses different text or images, the templates inside the `templates/` folder may need to be replaced.
+Known gap: `templates/difficulty/anchor_difficulty_torment.png` is still captured from the Chinese game UI (the upstream English package ships the same file), so Torment difficulty verification may fail until it is re-captured from the English game.
 
 In short:
 
-* Application GUI language: Chinese / English packages are available.
-* Core automation logic: shared between both packages.
-* Game UI recognition: depends on the templates included in the package.
+* Application GUI language: English.
+* Game UI recognition: English game UI, through the templates in `templates/`.
 * Game zoom: must stay at 1x / 100%.
 
 ---
@@ -119,6 +104,20 @@ In short:
 * Improved startup behavior so importing modules no longer creates runtime logs.
 * Hardened window lookup and failure handling.
 * Cleaned and reorganized core runtime code.
+
+---
+
+## Troubleshooting
+
+**The app can't find the game window.** Make sure TaskBarHero is running and its window title contains `TaskBarHero`. Don't minimize the game window.
+
+**The bot doesn't click the game.** Turn off *Background input mode*. The game doesn't always accept background input, and the default foreground mouse mode is more reliable.
+
+**The bot can't find a level.** Common causes: the game window size changed a lot, the map isn't open, the level's template screenshot is inaccurate, or the level image is missing from `templates/levels/`.
+
+**A level shows as `[Unavailable]`.** It's missing a required template or isn't fully supported yet. Add the template screenshot to enable it.
+
+**Adding a new level.** Add `templates/levels/level_<chapter>_<level>.png`. A new difficulty also needs `templates/difficulty/anchor_difficulty_<name>.png` and `templates/difficulty/tab_difficulty_<name>.png`. Then add the route to `route_config.py`.
 
 ---
 

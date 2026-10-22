@@ -551,7 +551,13 @@ STASH_TAB_TEMPLATES = get_config().get("stash_tab_templates", {
     "stash_3": "templates/general/stash_3.png",
     "stash_4": "templates/general/stash_4.png",
 })
-STORAGE_STASH_SEARCH_REGION = get_config().get("storage_stash_search_region", "hero_panel")
+STACK_STASH_AFTER_TRANSFER = env_flag(
+    "MAATBH_STACK_STASH_AFTER_TRANSFER",
+    config_bool("stack_stash_after_transfer", True),
+)
+STASH_STACK_PAGES = get_config().get("stash_stack_pages", ["stash_1", "stash_2", "stash_3"])
+BACKPACK_TO_STORAGE_TEMPLATE_PATH = "templates/general/backpack_to_storage_button.png"
+STORAGE_STASH_SEARCH_REGION =get_config().get("storage_stash_search_region", "hero_panel")
 STASH_LAST_SLOT_ANCHOR_OFFSET_X = config_int("stash_last_slot_anchor_offset_x", -9)
 STASH_LAST_SLOT_ANCHOR_OFFSET_Y = config_int("stash_last_slot_anchor_offset_y", -55)
 STASH_LAST_SLOT_WIDTH = config_positive_int("stash_last_slot_width", 38)
@@ -1355,6 +1361,8 @@ def log_recognition_profile_startup():
         f"move_backpack_to_storage_after_non_blue_box={MOVE_BACKPACK_TO_STORAGE_AFTER_NON_BLUE_BOX} | "
         f"auto_switch_stash_when_full={AUTO_SWITCH_STASH_WHEN_FULL} | "
         f"max_stash_pages_to_scan={MAX_STASH_PAGES_TO_SCAN} | "
+        f"stack_stash_after_transfer={STACK_STASH_AFTER_TRANSFER} | "
+        f"stash_stack_pages={get_stash_stack_pages()} | "
         f"stash_last_slot_blank_threshold={STASH_LAST_SLOT_BLANK_THRESHOLD:.2f} | "
         f"sort_stash_before_full_check={SORT_STASH_BEFORE_FULL_CHECK} | "
         f"post_stash_sort_wait={POST_STASH_SORT_WAIT_SECONDS:.2f}s | "
@@ -1489,7 +1497,7 @@ def log_startup_template_check():
 def log_chest_tier_breakpoint_validation():
     table_summary = ", ".join(
         (
-            f"{item['chest_tier']}级={item['difficulty']} "
+            f"tier{item['chest_tier']}={item['difficulty']} "
             f"{item['chapter']} {item['level']}"
         )
         for item in CHEST_TIER_BREAKPOINTS
@@ -1512,7 +1520,7 @@ def log_chest_tier_breakpoint_validation():
 
     for difficulty, chapter, level in sample_routes:
         tier = get_chest_tier_for_route(difficulty, chapter, level)
-        tier_label = "base" if tier is None else f"{tier}级"
+        tier_label = "base" if tier is None else f"tier{tier}"
         write_log(
             f"Chest tier sample check | "
             f"route={difficulty} {chapter} {level} | tier={tier_label}"
@@ -2876,30 +2884,114 @@ def ensure_storage_stash_has_space(hwnd, screenshot):
     return None
 
 
-def run_backpack_to_storage_transfer(context="blue_chest"):
-    wait_seconds = config_non_negative_float("post_blue_chest_storage_wait_seconds", 0.8)
-    threshold = config_non_negative_float("backpack_to_storage_match_threshold", 0.80)
-    post_click_wait = config_non_negative_float("post_storage_click_wait_seconds", 0.8)
+def get_stash_stack_pages():
+    if not isinstance(STASH_STACK_PAGES, (list, tuple)):
+        return []
 
-    write_log(f"Starting backpack-to-storage transfer | context={context}")
-    time.sleep(wait_seconds)
+    return [stash_name for stash_name in STASH_STACK_PAGES if stash_name in STASH_PAGE_ORDER]
 
-    template_path = "templates/general/backpack_to_storage_button.png"
 
+def load_backpack_to_storage_template(context):
     try:
-        template = load_template(template_path)
+        template = load_template(BACKPACK_TO_STORAGE_TEMPLATE_PATH)
     except FileNotFoundError as e:
         write_log(
             f"Storage transfer skipped: template missing | context={context} | "
-            f"path={template_path} | error={e}"
+            f"path={BACKPACK_TO_STORAGE_TEMPLATE_PATH} | error={e}"
         )
-        return False
+        return None
 
     if template is None:
         write_log(
             f"Storage transfer skipped: template failed to load | "
-            f"context={context} | path={template_path}"
+            f"context={context} | path={BACKPACK_TO_STORAGE_TEMPLATE_PATH}"
         )
+
+    return template
+
+
+def run_stash_stack_pass(template, context):
+    """
+    Press stash all on each configured stash tab in order, so backpack items
+    that match a stack already stored on that tab are merged into it.
+    """
+    if not STACK_STASH_AFTER_TRANSFER:
+        write_log(f"Stash stack pass disabled by GUI/config; skipping | context={context}")
+        return False
+
+    pages = get_stash_stack_pages()
+
+    if not pages:
+        write_log(
+            f"Stash stack pass skipped: no valid stash_stack_pages configured | "
+            f"context={context} | configured={STASH_STACK_PAGES}"
+        )
+        return False
+
+    write_log(f"Stash stack pass started | context={context} | pages={pages}")
+    stacked_pages = []
+
+    for stash_name in pages:
+        try:
+            screenshot = capture_window(GAME_HWND)
+        except Exception as e:
+            write_log(
+                f"Stash stack pass aborted: screenshot failed | "
+                f"stash={stash_name} | context={context} | error={e}"
+            )
+            break
+
+        if screenshot is None:
+            write_log(
+                f"Stash stack pass aborted: screenshot failed | "
+                f"stash={stash_name} | context={context}"
+            )
+            break
+
+        if not click_stash_page_tab(GAME_HWND, screenshot, stash_name):
+            write_log(
+                f"Stash stack pass skipped tab: switch failed | "
+                f"stash={stash_name} | context={context}"
+            )
+            continue
+
+        time.sleep(STASH_SWITCH_WAIT_SECONDS)
+
+        try:
+            screenshot = capture_window(GAME_HWND)
+        except Exception as e:
+            write_log(
+                f"Stash stack pass aborted: screenshot after tab switch failed | "
+                f"stash={stash_name} | context={context} | error={e}"
+            )
+            break
+
+        if screenshot is None:
+            write_log(
+                f"Stash stack pass aborted: screenshot after tab switch failed | "
+                f"stash={stash_name} | context={context}"
+            )
+            break
+
+        if click_backpack_to_storage_button(screenshot, template, f"{context}:stack_{stash_name}"):
+            stacked_pages.append(stash_name)
+
+    write_log(
+        f"Stash stack pass finished | context={context} | "
+        f"stacked={stacked_pages} | requested={pages}"
+    )
+    return len(stacked_pages) == len(pages)
+
+
+def run_backpack_to_storage_transfer(context="blue_chest"):
+    wait_seconds = config_non_negative_float("post_blue_chest_storage_wait_seconds", 0.8)
+
+    write_log(f"Starting backpack-to-storage transfer | context={context}")
+    time.sleep(wait_seconds)
+
+    template = load_backpack_to_storage_template(context)
+
+    if template is None:
         return False
 
     screenshot = capture_window(GAME_HWND)
@@ -2909,12 +3001,23 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
         return False
 
     screenshot = ensure_storage_stash_has_space(GAME_HWND, screenshot)
+    transfer_ok = False
 
     if screenshot is None:
         write_log(
             f"Storage transfer skipped: no available stash page confirmed | context={context}"
         )
-        return False
+    else:
+        transfer_ok = click_backpack_to_storage_button(screenshot, template, context)
+
+    # Runs even when every page looked full: full pages can still take items that stack.
+    run_stash_stack_pass(template, context)
+    return transfer_ok
+
+
+def click_backpack_to_storage_button(screenshot, template, context):
+    threshold = config_non_negative_float("backpack_to_storage_match_threshold", 0.80)
+    post_click_wait = config_non_negative_float("post_storage_click_wait_seconds", 0.8)
 
     # The storage/backpack button appears in the hero panel, not battle_bottom.
     x1, y1, x2, y2 = REGIONS.get("hero_panel", (0, 220, 640, 680))
@@ -2949,7 +3052,12 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
         f"confidence={confidence:.2f} | center=({local_x}, {local_y}) | context={context}"
     )
 
-    click_window_point(GAME_HWND, local_x, local_y, label="backpack_to_storage")
+    click_ok = click_window_point(GAME_HWND, local_x, local_y, label="backpack_to_storage")
+
+    if not click_ok:
+        write_log(f"Backpack-to-storage click failed safely | context={context}")
+        return False
+
     time.sleep(post_click_wait)
 
     write_log(f"Backpack-to-storage click completed | context={context}")
@@ -5155,10 +5263,11 @@ def skip_current_route_due_to_navigation_failure(reason, observed=None):
     )
 
     if SHOW_NAVIGATION_FAILURE_WARNING:
+        # The GUI pops up a warning for lines starting with "USER WARNING: Navigation failed".
         write_log(
-            f"关卡导航失败 {route_index + 1}: "
-            f"{route_target_label(route)}. 该关卡被跳过，MAA继续运行。 "
-            "请导出log文件以供分析。若不打算分析该问题，请无视本条消息。"
+            f"USER WARNING: Navigation failed on Route {route_index + 1}: "
+            f"{route_target_label(route)}. The route was skipped and MAA keeps running. "
+            "Export a Debug ZIP if you want this analyzed; otherwise you can ignore this message."
         )
 
     write_navigation_failure_report(route_index, route, observed, reason, "skipped")

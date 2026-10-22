@@ -156,6 +156,8 @@ DEFAULT_CONFIG = {
     "post_storage_click_wait_seconds": 0.8,
     "auto_switch_stash_when_full": True,
     "max_stash_pages_to_scan": 4,
+    "stack_stash_after_transfer": True,
+    "stash_stack_pages": ["stash_1", "stash_2", "stash_3"],
     "stash_tab_match_threshold": 0.80,
     "storage_anchor_match_threshold": 0.80,
     "stash_last_slot_blank_threshold": 0.85,

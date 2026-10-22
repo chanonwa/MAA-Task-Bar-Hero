@@ -18,7 +18,7 @@ from tkinter import scrolledtext
 from tkinter import messagebox
 from tkinter import ttk
 
-from config import CONFIG_FILE_NAME, get_base_dir, get_config, get_recognition_mode
+from config import CONFIG_FILE_NAME, get_base_dir, get_config
 from debug_files import (
     clear_generated_debug_files,
     export_debug_zip,
@@ -26,7 +26,7 @@ from debug_files import (
     has_significant_error,
     refresh_stale_debug_zip_selection,
 )
-from route_config import AVAILABLE_LEVELS
+from route_config import AVAILABLE_LEVELS, build_display_name
 
 
 BASE_DIR = get_base_dir()
@@ -61,16 +61,16 @@ def sanitize_text_for_output(value):
 configure_console_encoding()
 
 RECOMMENDED_GUIDE_LEVELS = [
-    "80级 | 折磨 | 1-3",
-    "65级 | 地狱 | 2-5",
-    "50级 | 噩梦 | 3-5",
-    "40级 | 噩梦 | 1-9",
-    "30级 | 普通 | 3-8",
-    "20级 | 普通 | 2-8",
-    "15级 | 普通 | 2-3",
-    "10级 | 普通 | 1-8",
-    "5级 | 普通 | 1-4",
-    "普通 | 1-1",
+    "Level 80 | Torment | Chapter 1 | Level 1-3",
+    "Level 65 | Hell | Chapter 2 | Level 2-5",
+    "Level 50 | Nightmare | Chapter 3 | Level 3-5",
+    "Level 40 | Nightmare | Chapter 1 | Level 1-9",
+    "Level 30 | Normal | Chapter 3 | Level 3-8",
+    "Level 20 | Normal | Chapter 2 | Level 2-8",
+    "Level 15 | Normal | Chapter 2 | Level 2-3",
+    "Level 10 | Normal | Chapter 1 | Level 1-8",
+    "Level 5 | Normal | Chapter 1 | Level 1-4",
+    "Normal | Chapter 1 | Level 1-1",
 ]
 
 RECOMMENDED_GUIDE_ROUTES = [
@@ -87,17 +87,14 @@ RECOMMENDED_GUIDE_ROUTES = [
 ]
 
 DIFFICULTY_OPTIONS = [
-    ("normal", "普通"),
-    ("nightmare", "噩梦"),
-    ("hell", "地狱"),
-    ("torment", "折磨"),
+    ("normal", "Normal"),
+    ("nightmare", "Nightmare"),
+    ("hell", "Hell"),
+    ("torment", "Torment"),
 ]
 
-RECOGNITION_MODE_OPTIONS = [
-    ("safe", "安全(仅推荐1K使用)"),
-    ("balanced", "平衡(推荐大多数用户使用)"),
-    ("aggressive", "兼容/激进(推荐高分无法兼容使用)"),
-]
+# The GUI no longer offers a recognition mode choice; it always saves balanced.
+GUI_RECOGNITION_MODE = "balanced"
 
 # GUI display labels are localized; config/internal values remain English.
 DIFFICULTY_LABELS = {
@@ -105,10 +102,6 @@ DIFFICULTY_LABELS = {
 }
 DIFFICULTY_KEYS_BY_LABEL = {
     label: key for key, label in DIFFICULTY_OPTIONS
-}
-
-RECOGNITION_MODE_LABELS = {
-    key: label for key, label in RECOGNITION_MODE_OPTIONS
 }
 
 WM_HOTKEY = 0x0312
@@ -227,14 +220,15 @@ def parse_emergency_hotkey_config():
     return modifiers, vk, display or "Ctrl + Shift + F12"
 
 KEY_INFO_LINES = [
-    "使用前请确保以下事项已准备就绪：",
+    "Before using, make sure the following are ready:",
     "",
-    "1.解压文件夹内的所有内容都在固定位置，不要移动或删除任何文件，且路径不支持中文字符",
-    "2.地图已经被打开，并且可以看到关卡列表，若开启放入仓库 则需要打开仓库界面",
-    "3.箱子掉落UI没有被透明化，UI大小为1x，日志处于固定窗口状态（设置内调整）",
-    "4.推荐配置为1080p，缩放比100%，以获得最佳效果，目前已做到兼容2K,3K,4K，但不保证所有设备都能完美适配",
-    "5.MAA切换关卡时会出现抢鼠标的情况，请不要操作鼠标，等待MAA完成关卡切换。若看到鼠标抽风，请不要慌张，MAA正在自动修正中，等待10-20秒通常可以恢复正常",
-    "6.如果需要紧急停止，使用热键Ctrl + Shift + F12，该热键在任何时候都可以安全停止MAA",
+    "1. Keep every extracted file in a fixed location. Do not move or delete files. Non-ASCII paths are not recommended.",
+    "2. Open the map so the level list is visible. If storage transfer is enabled, open the storage screen too.",
+    "3. Keep chest drop UI opaque, UI size at 1x, and the battle log in a fixed-window state.",
+    "4. Recommended setup is 1080p with 100% Windows scaling. 2K, 3K, and 4K are supported where possible, but not guaranteed on every device.",
+    "5. Keep game zoom at 1x / 100%. 1.25x, 1.5x, and 2x game/browser zoom are not supported.",
+    "6. MAA may take over the mouse while switching levels. Do not use the mouse until switching is complete; recovery usually settles in 10-20 seconds.",
+    "7. Emergency Stop: Ctrl + Shift + F12. This hotkey can safely stop MAA at any time.",
 ]
 
 class RoutePlannerApp:
@@ -262,13 +256,16 @@ class RoutePlannerApp:
         )
         self.last_navigation_failure_warning = ""
         self.notified_warning_keys = set()
-        self.status_var = tk.StringVar(value="就绪：选择路线后可以保存并启动MAA。")
+        self.status_var = tk.StringVar(value="Ready: choose routes, then save and start the bot.")
         self.background_input_var = tk.BooleanVar(value=False)
         self.move_to_storage_var = tk.BooleanVar(
             value=bool(get_config().get("move_backpack_to_storage_after_blue_chest", False))
         )
         self.move_to_storage_after_non_blue_var = tk.BooleanVar(
             value=config_bool_value("move_backpack_to_storage_after_non_blue_box", True)
+        )
+        self.stack_stash_var = tk.BooleanVar(
+            value=config_bool_value("stack_stash_after_transfer", True)
         )
         self.repeat_same_level_var = tk.BooleanVar(
             value=config_bool_value("repeat_same_level_after_blue_chest", False)
@@ -278,10 +275,7 @@ class RoutePlannerApp:
         )
         self.no_chest_retries_var = tk.StringVar(value=str(self.get_default_no_chest_retries()))
         self.difficulty_var = tk.StringVar(value="normal")
-        self.difficulty_display_var = tk.StringVar(value=DIFFICULTY_LABELS.get("normal", "普通"))
-        self.recognition_mode_var = tk.StringVar(
-            value=RECOGNITION_MODE_LABELS.get(get_recognition_mode(), "平衡")
-        )
+        self.difficulty_display_var = tk.StringVar(value=DIFFICULTY_LABELS.get("normal", "Normal"))
 
         style = ttk.Style()
         style.configure("TLabel", font=("Segoe UI", 10))
@@ -300,21 +294,27 @@ class RoutePlannerApp:
         top_frame.columnconfigure(0, weight=1)
         top_frame.columnconfigure(1, weight=1)
 
-        key_info_frame = tk.LabelFrame(top_frame, text="使用前说明")
+        key_info_frame = tk.LabelFrame(top_frame, text="Key Info")
         key_info_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         key_info_frame.columnconfigure(0, weight=1)
 
         key_info_text = "\n".join(KEY_INFO_LINES)
-        tk.Label(
+        key_info_label = tk.Label(
             key_info_frame,
             text=key_info_text,
             anchor="nw",
             justify="left",
             wraplength=520,
             fg="#333333",
-        ).grid(row=0, column=0, sticky="nsew", padx=8, pady=6)
+        )
+        key_info_label.grid(row=0, column=0, sticky="nsew", padx=8, pady=6)
+        # Wrap at the frame's real width so the long English lines use fewer rows.
+        key_info_label.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=max(200, event.width - 4)),
+        )
 
-        guide_frame = tk.LabelFrame(top_frame, text="推荐刷图参考")
+        guide_frame = tk.LabelFrame(top_frame, text="Recommended Farming Guide")
         guide_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         guide_frame.columnconfigure(0, weight=1)
 
@@ -333,20 +333,20 @@ class RoutePlannerApp:
 
         tk.Button(
             guide_button_frame,
-            text="使用推荐路线",
+            text="Use Recommended",
             width=16,
             command=self.load_recommended_plan,
         ).grid(row=0, column=0, pady=(0, 4))
 
         tk.Button(
             guide_button_frame,
-            text="一键保存并启动",
+            text="Save and Start",
             width=16,
             command=self.start_recommended_plan,
         ).grid(row=1, column=0)
 
         # Middle: route planner.
-        planner_frame = tk.LabelFrame(root, text="路线选择")
+        planner_frame = tk.LabelFrame(root, text="Route Selection")
         planner_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=4)
         planner_frame.columnconfigure(0, weight=1)
         planner_frame.columnconfigure(2, weight=1)
@@ -357,7 +357,7 @@ class RoutePlannerApp:
         filter_frame.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=(8, 4))
         filter_frame.columnconfigure(1, weight=1)
 
-        tk.Label(filter_frame, text="选择难度：").grid(row=0, column=0, sticky="w")
+        tk.Label(filter_frame, text="Difficulty:").grid(row=0, column=0, sticky="w")
 
         difficulty_menu = tk.OptionMenu(
             filter_frame,
@@ -367,7 +367,7 @@ class RoutePlannerApp:
         )
         difficulty_menu.grid(row=0, column=1, sticky="w", padx=(8, 0))
 
-        tk.Label(planner_frame, text="可用关卡").grid(
+        tk.Label(planner_frame, text="Available Levels").grid(
             row=1, column=0, sticky="n", padx=(0, 10), pady=(0, 0)
         )
 
@@ -378,15 +378,16 @@ class RoutePlannerApp:
         button_frame = tk.Frame(planner_frame)
         button_frame.grid(row=2, column=1, sticky="n", padx=8, pady=(24, 8))
 
-        tk.Button(button_frame, text="添加 →", width=14, command=self.add_selected).grid(row=0, column=0, pady=4)
-        tk.Button(button_frame, text="← 移除", width=14, command=self.remove_selected).grid(row=1, column=0, pady=4)
-        tk.Button(button_frame, text="上移", width=14, command=self.move_up).grid(row=2, column=0, pady=4)
-        tk.Button(button_frame, text="下移", width=14, command=self.move_down).grid(row=3, column=0, pady=4)
-        tk.Button(button_frame, text="清空路线", width=14, command=self.clear_plan).grid(row=4, column=0, pady=4)
-        tk.Button(button_frame, text="读取路线", width=14, command=self.load_existing_plan).grid(row=5, column=0, pady=4)
+        # Two columns so all six buttons stay visible when the window is short.
+        tk.Button(button_frame, text="Add →", width=11, command=self.add_selected).grid(row=0, column=0, padx=2, pady=4)
+        tk.Button(button_frame, text="← Remove", width=11, command=self.remove_selected).grid(row=0, column=1, padx=2, pady=4)
+        tk.Button(button_frame, text="Move Up", width=11, command=self.move_up).grid(row=1, column=0, padx=2, pady=4)
+        tk.Button(button_frame, text="Move Down", width=11, command=self.move_down).grid(row=1, column=1, padx=2, pady=4)
+        tk.Button(button_frame, text="Clear All", width=11, command=self.clear_plan).grid(row=2, column=0, padx=2, pady=4)
+        tk.Button(button_frame, text="Load Routes", width=11, command=self.load_existing_plan).grid(row=2, column=1, padx=2, pady=4)
 
         # Right: selected plan.
-        tk.Label(planner_frame, text="当前刷图循环").grid(
+        tk.Label(planner_frame, text="Current Farming Cycle").grid(
             row=1, column=2, sticky="n", padx=(10, 0), pady=(0, 0)
         )
 
@@ -395,10 +396,10 @@ class RoutePlannerApp:
 
         # Help text.
         help_text = (
-            "使用说明：左侧先选择难度，再选择关卡并添加到右侧循环列表。\n"
-            "右侧列表会自动循环执行，无需重复添加。重复次数会保存到每条路线。\n"
-            "更多功能开发中，欢迎加入Q群851450292反馈 BUG 与开发建议。\n"
-            "有问题请私信 B站UP主：没变成彩天鹅的笔小鸭~"
+            "Instructions: choose a difficulty on the left, then choose levels and add them to the cycle list.\n"
+            "The right-side list runs in a loop automatically; no duplicate entries are needed.\n"
+            "Retry count is saved to each route. More features are in development; bug reports are welcome.\n"
+            "For questions or bug reports, contact Marcus-Xu-04 on GitHub or refer to the project release notes."
         )
 
         tk.Label(planner_frame, text=help_text, justify="left", anchor="w").grid(
@@ -406,74 +407,66 @@ class RoutePlannerApp:
         )
 
         # Controls.
-        control_frame = tk.LabelFrame(root, text="MAA 控制")
+        control_frame = tk.LabelFrame(root, text="Bot Control")
         control_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 8))
         control_frame.columnconfigure(4, weight=1)
 
         tk.Button(
             control_frame,
-            text="保存并启动 MAA",
+            text="Save and Start",
             width=18,
             command=self.start_bot,
         ).grid(row=0, column=0, padx=(10, 8), pady=(10, 4))
 
         tk.Button(
             control_frame,
-            text="停止 MAA",
+            text="Stop",
             width=14,
             command=self.stop_bot,
         ).grid(row=0, column=1, padx=(0, 12), pady=(10, 4))
 
         tk.Button(
             control_frame,
-            text="导出报错log压缩包",
+            text="Export Debug ZIP",
             width=18,
             command=self.export_debug_zip,
         ).grid(row=2, column=0, columnspan=2, sticky="w", padx=(10, 8), pady=(0, 8))
 
         tk.Label(
             control_frame,
-            text="识别模式：",
-            anchor="w",
-        ).grid(row=2, column=2, sticky="w", padx=(0, 4), pady=(0, 8))
-
-        recognition_menu = tk.OptionMenu(
-            control_frame,
-            self.recognition_mode_var,
-            *[label for _key, label in RECOGNITION_MODE_OPTIONS],
-            command=self.on_recognition_mode_changed,
-        )
-        recognition_menu.grid(row=2, column=3, sticky="w", pady=(0, 8))
-
-        tk.Label(
-            control_frame,
-            text="若箱子刷关后未掉落，重复关卡次数:",
+            text="Retries when no chest drops:",
             anchor="w",
         ).grid(row=0, column=2, sticky="w", padx=(0, 4), pady=(10, 4))
 
         tk.Checkbutton(
             control_frame,
-            text="自动转移背包物品到仓库",
+            text="Move backpack items to storage after blue chest",
             variable=self.move_to_storage_var,
         ).grid(row=1, column=2, columnspan=3, sticky="w", padx=(0, 10), pady=(4, 10))
 
         tk.Checkbutton(
             control_frame,
-            text="蓝箱掉落后重复同一关卡",
+            text="Repeat the same level after a blue chest",
             variable=self.repeat_same_level_var,
         ).grid(row=1, column=4, sticky="w", padx=(14, 10), pady=(4, 10))
 
         tk.Checkbutton(
             control_frame,
-            text="路线失败时尝试同等级箱子替代关卡",
+            text="Try same-tier substitute when route navigation fails",
             variable=self.same_tier_substitution_var,
         ).grid(row=2, column=4, sticky="w", padx=(14, 10), pady=(0, 8))
 
         tk.Checkbutton(
             control_frame,
-            text="棕/其他箱后转移背包到仓库",
+            text="Move backpack items to storage after brown/other chest",
             variable=self.move_to_storage_after_non_blue_var,
         ).grid(row=3, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 8))
+
+        tk.Checkbutton(
+            control_frame,
+            text="Stash all again on stash tabs 1-3 to stack items",
+            variable=self.stack_stash_var,
+        ).grid(row=3, column=4, sticky="w", padx=(14, 10), pady=(0, 8))
 
         tk.Entry(
             control_frame,
@@ -489,7 +482,7 @@ class RoutePlannerApp:
 
         tk.Checkbutton(
             control_frame,
-            text="后台输入模式（仅供开发者调试开发）",
+            text="Background input mode (in development)",
             variable=self.background_input_var,
         ).grid(row=1, column=0, columnspan=2, sticky="w", padx=(10, 8), pady=(4, 10))
 
@@ -502,13 +495,13 @@ class RoutePlannerApp:
 
         tk.Label(
             control_frame,
-            text=f"紧急停止热键：{self.emergency_hotkey_display}",
+            text=f"Emergency stop hotkey: {self.emergency_hotkey_display}",
             anchor="w",
             fg="#444444",
         ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(10, 8), pady=(0, 8))
 
         # Log panel.
-        log_frame = tk.LabelFrame(root, text="MAA 日志")
+        log_frame = tk.LabelFrame(root, text="Bot Log")
         log_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
@@ -624,7 +617,7 @@ class RoutePlannerApp:
                 f"error_code={error_code}\n"
             )
             self.notify_hotkey_status(
-                f"紧急停止热键注册失败，GUI 可继续使用：{self.emergency_hotkey_display}"
+                f"Emergency stop hotkey registration failed; GUI remains usable: {self.emergency_hotkey_display}"
             )
             return
 
@@ -692,7 +685,7 @@ class RoutePlannerApp:
             return
 
         if self.bot_process is None or self.bot_process.poll() is not None:
-            self.status_var.set("紧急停止热键已触发：MAA 当前没有运行。")
+            self.status_var.set("Emergency stop hotkey triggered: bot is not running.")
             self.append_log_text("[GUI] Emergency stop hotkey pressed; no bot process was running.\n")
 
             if self.bot_process is not None:
@@ -702,7 +695,7 @@ class RoutePlannerApp:
             return
 
         self.emergency_stop_pending = True
-        self.status_var.set("紧急停止热键已触发：正在停止 MAA...")
+        self.status_var.set("Emergency stop hotkey triggered: stopping bot...")
 
         try:
             self.bot_process.terminate()
@@ -745,7 +738,7 @@ class RoutePlannerApp:
             self.emergency_stop_pending = False
             self.close_bot_log_handle()
             self.cleanup_after_clean_stop(process_exit_code=None, closing=False)
-            self.status_var.set("紧急停止已执行：MAA 已停止。")
+            self.status_var.set("Emergency stop executed: bot stopped.")
 
     def find_available_level(self, difficulty, chapter, level_name):
         for level in AVAILABLE_LEVELS:
@@ -777,21 +770,21 @@ class RoutePlannerApp:
         plan, missing = self.build_recommended_plan()
 
         if not plan:
-            messagebox.showwarning("推荐路线不可用", "没有找到可用的推荐路线。")
+            messagebox.showwarning("Recommended routes unavailable", "No available recommended routes were found.")
             return False
 
         self.selected_routes = plan
         self.refresh_plan_listbox()
-        self.status_var.set(f"已加载推荐路线：{len(plan)} 条。")
+        self.status_var.set(f"Loaded {len(plan)} recommended route(s).")
 
         if show_message:
             if missing:
                 messagebox.showwarning(
-                    "推荐路线部分缺失",
-                    "已加载可用推荐路线。以下目标不可用：\n" + "\n".join(missing),
+                    "Some recommended routes are missing",
+                    "Loaded available recommended routes. These targets are unavailable:\n" + "\n".join(missing),
                 )
             else:
-                messagebox.showinfo("推荐路线已加载", f"已加载 {len(plan)} 条推荐路线。")
+                messagebox.showinfo("Recommended routes loaded", f"Loaded {len(plan)} recommended route(s).")
 
         return True
 
@@ -823,43 +816,22 @@ class RoutePlannerApp:
             retries = int(raw_value)
         except ValueError:
             messagebox.showwarning(
-                "重复次数无效",
-                "重复关卡次数必须是大于等于 0 的整数。"
+                "Invalid retry count",
+                "Retry count must be an integer greater than or equal to 0."
             )
             return None
 
         if retries < 0:
             messagebox.showwarning(
-                "重复次数无效",
-                "重复关卡次数必须是大于等于 0 的整数。"
+                "Invalid retry count",
+                "Retry count must be an integer greater than or equal to 0."
             )
             return None
 
         return retries
 
-    def get_selected_recognition_mode(self):
-        selected_label = self.recognition_mode_var.get()
-
-        for key, label in RECOGNITION_MODE_OPTIONS:
-            if selected_label == label or selected_label == key:
-                return key
-
-        return "balanced"
-
-    def on_recognition_mode_changed(self, _value=None):
-        if self.get_selected_recognition_mode() != "aggressive":
-            return
-
-        messagebox.showwarning(
-            "激进识别模式",
-            "激进识别模式可能改善缩放显示器或弱模板的匹配效果，"
-            "但也会增加选错章节或关卡的风险。建议仅用于平衡无法使用时；"
-            "如果行为异常，请导出报错log压缩包。"
-        )
-
-    def save_recognition_mode_config(self):
+    def save_gui_options_config(self):
         config_path = BASE_DIR / CONFIG_FILE_NAME
-        selected_mode = self.get_selected_recognition_mode()
 
         try:
             if config_path.exists():
@@ -873,46 +845,25 @@ class RoutePlannerApp:
         if not isinstance(config, dict):
             config = get_config().copy()
 
-        config["recognition_mode"] = selected_mode
+        config["recognition_mode"] = GUI_RECOGNITION_MODE
         config["same_tier_substitution_enabled"] = bool(self.same_tier_substitution_var.get())
         config["repeat_same_level_after_blue_chest"] = bool(self.repeat_same_level_var.get())
         config["move_backpack_to_storage_after_non_blue_box"] = bool(
             self.move_to_storage_after_non_blue_var.get()
         )
+        config["stack_stash_after_transfer"] = bool(self.stack_stash_var.get())
 
         with config_path.open("w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
             f.write("\n")
 
-        return selected_mode
-
-    def format_difficulty_cn(self, difficulty):
-        mapping = {
-            "normal": "普通",
-            "nightmare": "噩梦",
-            "hell": "地狱",
-            "torment": "折磨",
-        }
-        return mapping.get(difficulty, difficulty)
-
-    def format_chapter_cn(self, chapter):
-        mapping = {
-            "chapter_1": "第1章",
-            "chapter_2": "第2章",
-            "chapter_3": "第3章",
-        }
-        return mapping.get(chapter, chapter)
-
     def format_level_label(self, level):
-        # if route_config.py already has display_name use it directly for simplicity and to allow custom labels, otherwise build a default one.
-        if "display_name" in level:
-            return level["display_name"]
-
-        difficulty = self.format_difficulty_cn(level["difficulty"])
-        chapter = self.format_chapter_cn(level["chapter"])
-        stage = level["level"]
-
-        return f"{difficulty} | {chapter} | {stage}"
+        # Built from the route fields, not the saved display_name, so plans saved
+        # by older Chinese builds still show English labels.
+        try:
+            return build_display_name(level["difficulty"], level["level"])
+        except (KeyError, ValueError):
+            return str(level.get("display_name") or level.get("name", "Unknown route"))
 
     def on_difficulty_changed(self, display_label):
         self.difficulty_var.set(DIFFICULTY_KEYS_BY_LABEL.get(display_label, display_label))
@@ -933,7 +884,7 @@ class RoutePlannerApp:
 
             if not level.get("enabled", True):
                 note = level.get("note", "")
-                label = f"[未开放] {label}"
+                label = f"[Unavailable] {label}"
 
                 if note:
                     label += f" - {note}"
@@ -958,8 +909,8 @@ class RoutePlannerApp:
 
         if not level.get("enabled", True):
             messagebox.showwarning(
-                "关卡暂不可用",
-                f"{self.format_level_label(level)} 暂时不可添加。\n\n"
+                "Level unavailable",
+                f"{self.format_level_label(level)} cannot be added yet.\n\n"
                 f"{level.get('note', '')}"
             )
             return
@@ -1022,8 +973,8 @@ class RoutePlannerApp:
     def save_plan(self, show_message=True):
         if not self.selected_routes:
             messagebox.showwarning(
-                "没有选择路线",
-                "请至少添加一个刷图目标到右侧路线列表。"
+                "No routes selected",
+                "Please add at least one farming target to the route list."
             )
             return False
 
@@ -1033,9 +984,9 @@ class RoutePlannerApp:
             return False
 
         try:
-            selected_mode = self.save_recognition_mode_config()
+            self.save_gui_options_config()
         except OSError as e:
-            messagebox.showerror("配置保存失败", f"无法保存 recognition_mode 到 config.json：\n\n{e}")
+            messagebox.showerror("Config save failed", f"Could not save settings to config.json:\n\n{e}")
             return False
 
         plan = []
@@ -1050,20 +1001,19 @@ class RoutePlannerApp:
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(plan, f, indent=4, ensure_ascii=False)
 
-        self.status_var.set(f"已保存 {len(plan)} 条路线到 {OUTPUT_FILE.name}。")
+        self.status_var.set(f"Saved {len(plan)} route(s) to {OUTPUT_FILE.name}.")
 
         if show_message:
             messagebox.showinfo(
-                "保存成功",
-                f"刷图路线已保存到 {OUTPUT_FILE.name}\n"
-                f"识别模式：{RECOGNITION_MODE_LABELS.get(selected_mode, selected_mode)}"
+                "Saved",
+                f"Farming route saved to {OUTPUT_FILE.name}"
             )
 
         return True
 
     def start_bot(self):
         if self.bot_process is not None and self.bot_process.poll() is None:
-            messagebox.showinfo("MAA 已在运行", "别急，MAA 已经在跑了。")
+            messagebox.showinfo("Bot already running", "Easy there, the bot is already running.")
             return
 
         if not self.save_plan(show_message=False):
@@ -1072,7 +1022,7 @@ class RoutePlannerApp:
         frozen_app = getattr(sys, "frozen", False)
 
         if not frozen_app and not MAIN_FILE.exists():
-            messagebox.showerror("启动失败", f"找不到 {MAIN_FILE}")
+            messagebox.showerror("Start failed", f"Could not find {MAIN_FILE}")
             return
 
         try:
@@ -1100,12 +1050,11 @@ class RoutePlannerApp:
             env["MAATBH_REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST"] = (
                 "1" if self.repeat_same_level_var.get() else "0"
             )
+            env["MAATBH_STACK_STASH_AFTER_TRANSFER"] = "1" if self.stack_stash_var.get() else "0"
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             self.write_bot_console_log(f"=== Input mode: {input_mode} ===\n")
-            self.write_bot_console_log(
-                f"=== Recognition mode: {self.get_selected_recognition_mode()} ===\n"
-            )
+            self.write_bot_console_log(f"=== Recognition mode: {GUI_RECOGNITION_MODE} ===\n")
             self.write_bot_console_log(
                 f"=== Move backpack to storage: {'on' if self.move_to_storage_var.get() else 'off'} ===\n"
             )
@@ -1115,6 +1064,9 @@ class RoutePlannerApp:
             )
             self.write_bot_console_log(
                 f"=== Repeat same level after blue chest: {'on' if self.repeat_same_level_var.get() else 'off'} ===\n"
+            )
+            self.write_bot_console_log(
+                f"=== Stack stash pages after transfer: {'on' if self.stack_stash_var.get() else 'off'} ===\n"
             )
             bot_command = (
                 [sys.executable, "--bot"]
@@ -1134,32 +1086,32 @@ class RoutePlannerApp:
             if self.bot_process.stdin is not None:
                 self.bot_process.stdin.close()
             if input_mode == "background":
-                self.status_var.set("MAA 已启动：后台输入实验模式。若游戏无响应，请关闭该选项。")
+                self.status_var.set("Bot started: experimental background input mode. Disable this if the game does not respond.")
             else:
-                self.status_var.set("MAA 已启动：前台鼠标模式。")
+                self.status_var.set("Bot started: foreground mouse mode.")
         except Exception as e:
             self.close_bot_log_handle()
             self.bot_process = None
-            messagebox.showerror("启动失败", f"无法启动 main.py：\n\n{e}")
+            messagebox.showerror("Start failed", f"Could not start main.py:\n\n{e}")
 
     def stop_bot(self):
         if not self.stop_bot_process():
-            self.status_var.set("MAA 当前没有运行。")
+            self.status_var.set("Bot is not currently running.")
 
     def export_debug_zip(self):
         self.prepare_debug_export_logs()
 
         default_path = get_export_default_path(BASE_DIR)
         zip_path = filedialog.asksaveasfilename(
-            title="导出报错log压缩包",
+            title="Export Debug ZIP",
             initialdir=str(default_path.parent),
             initialfile=default_path.name,
             defaultextension=".zip",
-            filetypes=[("ZIP 压缩包", "*.zip"), ("所有文件", "*.*")],
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
         )
 
         if not zip_path:
-            self.status_var.set("已取消导出报错log压缩包；日志已保留。")
+            self.status_var.set("Debug ZIP export cancelled; logs were preserved.")
             return
 
         zip_path = refresh_stale_debug_zip_selection(zip_path, default_path)
@@ -1173,8 +1125,8 @@ class RoutePlannerApp:
                 gui_console_text=self.get_gui_console_text(),
             )
         except Exception as e:
-            messagebox.showerror("导出报错log压缩包失败", f"无法导出报错log压缩包：\n\n{e}")
-            self.status_var.set("导出报错log压缩包失败；日志已保留。")
+            messagebox.showerror("Export Debug ZIP failed", f"Could not export Debug ZIP:\n\n{e}")
+            self.status_var.set("Debug ZIP export failed; logs were preserved.")
             return
 
         cleanup_allowed = (
@@ -1184,45 +1136,45 @@ class RoutePlannerApp:
 
         if cleanup_allowed:
             cleanup = self.clear_generated_debug_files_after_safe_event("debug_zip_exported")
-            cleanup_message = f"已清理生成的调试文件：{len(cleanup['removed'])}"
+            cleanup_message = f"Cleaned generated files: {len(cleanup['removed'])}"
         else:
             cleanup = {"removed": [], "failed": []}
-            cleanup_message = "生成的调试文件未清理。"
+            cleanup_message = "Generated debug files were not cleaned."
 
         message = (
-            f"调试压缩包已导出：\n{Path(result['zip_path']).name}\n\n"
-            f"ZIP 路径：{result['zip_path']}\n"
-            f"已包含文件：{len(result['included'])}\n"
-            f"缺失的可选文件：{len(result['missing'])}\n"
-            f"包含运行证据：{result.get('has_runtime_evidence')}\n"
-            f"检测到警告：{result.get('has_warnings')}\n"
+            f"Debug ZIP exported:\n{Path(result['zip_path']).name}\n\n"
+            f"ZIP path: {result['zip_path']}\n"
+            f"Included files: {len(result['included'])}\n"
+            f"Missing optional files: {len(result['missing'])}\n"
+            f"Runtime evidence included: {result.get('has_runtime_evidence')}\n"
+            f"Warnings detected: {result.get('has_warnings')}\n"
             f"{cleanup_message}"
         )
 
         if cleanup["failed"]:
-            message += f"\n清理跳过或失败的文件数：{len(cleanup['failed'])}"
+            message += f"\nCleanup skipped/failed for: {len(cleanup['failed'])} file(s)"
 
         if not result.get("has_runtime_evidence"):
             message += (
-                "\n\n调试压缩包没有包含运行证据，可能是旧导出，"
-                "或从错误文件夹导出。"
+                "\n\nDebug ZIP has no runtime evidence and may be stale "
+                "or exported from the wrong folder."
             )
-            messagebox.showwarning("导出调试压缩包", message)
-            self.status_var.set("调试压缩包已导出，但没有运行证据；日志已保留。")
+            messagebox.showwarning("Export Debug ZIP", message)
+            self.status_var.set("Debug ZIP exported with no runtime evidence; logs were preserved.")
         elif result.get("is_stale_export"):
             message += (
-                "\n\n调试压缩包导出时发现旧证据或缺失证据警告。"
-                "生成的调试文件未清理。"
+                "\n\nDebug ZIP exported with stale/missing-evidence warnings. "
+                "Generated debug files were not cleaned."
             )
-            messagebox.showwarning("导出调试压缩包", message)
-            self.status_var.set("调试压缩包已导出，但有警告；日志已保留。")
+            messagebox.showwarning("Export Debug ZIP", message)
+            self.status_var.set("Debug ZIP exported with warnings; logs were preserved.")
         elif result.get("has_warnings"):
-            message += "\n\n调试压缩包已导出，但有警告。请查看 debug_manifest.txt。"
-            messagebox.showwarning("导出调试压缩包", message)
-            self.status_var.set(f"调试压缩包已导出，但有警告：{Path(result['zip_path']).name}")
+            message += "\n\nDebug ZIP exported with warnings. See debug_manifest.txt."
+            messagebox.showwarning("Export Debug ZIP", message)
+            self.status_var.set(f"Debug ZIP exported with warnings: {Path(result['zip_path']).name}")
         else:
-            messagebox.showinfo("导出调试压缩包", message)
-            self.status_var.set(f"调试压缩包已导出：{Path(result['zip_path']).name}")
+            messagebox.showinfo("Export Debug ZIP", message)
+            self.status_var.set(f"Debug ZIP exported: {Path(result['zip_path']).name}")
 
     def prepare_debug_export_logs(self):
         if self.bot_log_handle is not None:
@@ -1259,7 +1211,7 @@ class RoutePlannerApp:
 
         if cleanup["failed"]:
             self.append_log_text(
-                "\n[GUI] 调试文件清理时有跳过或失败项，触发事件："
+                "\n[GUI] Debug cleanup had skipped/failed files after "
                 f"{reason}:\n"
                 + "\n".join(f"- {path}: {error}" for path, error in cleanup["failed"])
                 + "\n"
@@ -1270,13 +1222,13 @@ class RoutePlannerApp:
     def cleanup_after_clean_stop(self, process_exit_code=None, closing=False):
         if has_significant_error(BASE_DIR, process_exit_code=process_exit_code):
             if not closing:
-                self.status_var.set("MAA 已停止；检测到错误，调试文件已保留。")
+                self.status_var.set("Bot stopped; debug files preserved because an error was detected.")
             return
 
         cleanup = self.clear_generated_debug_files_after_safe_event("clean_bot_stop")
 
         if not closing:
-            self.status_var.set(f"MAA 已正常停止；已清理 {len(cleanup['removed'])} 个生成的调试文件。")
+            self.status_var.set(f"Bot stopped cleanly; cleared {len(cleanup['removed'])} generated debug file(s).")
 
     def stop_bot_process(self, closing=False):
         if self.bot_process is None:
@@ -1321,11 +1273,11 @@ class RoutePlannerApp:
                     process.wait(timeout=3)
 
             if not closing:
-                self.status_var.set("MAA 已停止。")
+                self.status_var.set("Bot stopped.")
         except Exception as e:
             stop_failed = True
             if not closing:
-                messagebox.showerror("停止 MAA 失败", f"无法停止 MAA：\n\n{e}")
+                messagebox.showerror("Stop Bot failed", f"Could not stop bot:\n\n{e}")
         finally:
             self.bot_process = None
             self.close_bot_log_handle()
@@ -1345,7 +1297,7 @@ class RoutePlannerApp:
             code = self.bot_process.poll()
 
             if code is not None:
-                self.status_var.set(f"MAA 已结束，退出码：{code}")
+                self.status_var.set(f"Bot exited with code: {code}")
                 self.bot_process = None
                 self.close_bot_log_handle()
                 self.cleanup_after_clean_stop(process_exit_code=code)
@@ -1405,7 +1357,7 @@ class RoutePlannerApp:
             self.append_log_text(text)
             self.handle_navigation_failure_warning(text)
         except Exception as e:
-            self.append_log_text(f"\n[GUI] 无法读取 MAA 日志：{e}\n")
+            self.append_log_text(f"\n[GUI] Could not read bot log: {e}\n")
 
     def handle_navigation_failure_warning(self, text):
         if "USER WARNING: Navigation failed" not in text:
@@ -1431,9 +1383,9 @@ class RoutePlannerApp:
 
             self.notified_warning_keys.add(key)
             self.last_navigation_failure_warning = warning
-            self.status_var.set("某条路线导航失败，已跳过并继续。建议导出调试压缩包。")
+            self.status_var.set("Navigation failed for a route; skipped and continued. Export Debug ZIP.")
             messagebox.showwarning(
-                "路线已跳过",
+                "Navigation route skipped",
                 warning.replace("USER WARNING: ", "")
             )
 
@@ -1468,7 +1420,7 @@ class RoutePlannerApp:
     def load_existing_plan(self, silent=False):
         if not os.path.exists(OUTPUT_FILE):
             if not silent:
-                messagebox.showinfo("没有找到路线文件", f"{OUTPUT_FILE.name} 不存在。")
+                messagebox.showinfo("Route file not found", f"{OUTPUT_FILE.name} does not exist.")
             return
 
         try:
@@ -1476,7 +1428,7 @@ class RoutePlannerApp:
                 plan = json.load(f)
 
             if not isinstance(plan, list):
-                raise ValueError("farm_plan.json 必须是一个列表。")
+                raise ValueError("farm_plan.json must be a list.")
 
             self.selected_routes = plan
             if plan:
@@ -1501,12 +1453,12 @@ class RoutePlannerApp:
             self.refresh_plan_listbox()
 
             if not silent:
-                messagebox.showinfo("读取成功", f"已从 {OUTPUT_FILE.name} 读取 {len(plan)} 条路线。")
+                messagebox.showinfo("Loaded", f"Loaded {len(plan)} route(s) from {OUTPUT_FILE.name}.")
 
-            self.status_var.set(f"已读取 {len(plan)} 条路线。")
+            self.status_var.set(f"Loaded {len(plan)} route(s).")
 
         except Exception as e:
-            messagebox.showerror("读取失败", f"无法读取 {OUTPUT_FILE.name}：\n\n{e}")
+            messagebox.showerror("Load failed", f"Could not load {OUTPUT_FILE.name}:\n\n{e}")
 
 
 if __name__ == "__main__":
