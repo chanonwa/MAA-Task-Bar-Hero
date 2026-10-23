@@ -36,7 +36,7 @@ In the GUI, add stages to the farming cycle, tick the options you want, and pres
 
 **The bot can't find a stage.** Check the zoom is 1x and the PORTAL window is open. A stage marked `[Unavailable]` is missing its template in `templates/levels/`.
 
-**Adding templates.** A stage needs `templates/levels/level_<act>_<stage>.png`. A difficulty needs `templates/difficulty/anchor_difficulty_<name>.png`. A soulstone difficulty needs its icon in `soulstone_icon_templates` and its tooltip title in `soulstone_title_templates` (`config.json`).
+**Adding templates.** A stage needs `templates/levels/level_<act>_<stage>.png`. A difficulty needs `templates/difficulty/anchor_difficulty_<name>.png`. Soulstones of all four difficulties are recognized by their icon (`soulstone_icon_templates`) and tooltip title (`soulstone_title_templates`) in `config.json`. The bot finds them in the stash and the backpack.
 
 **Reporting a problem.** Use **Export Debug ZIP** in the GUI and include the zip. It holds the logs and screenshots that show what the bot saw.
 

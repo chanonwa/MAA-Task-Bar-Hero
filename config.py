@@ -144,10 +144,14 @@ DEFAULT_CONFIG = {
     "soulstone_icon_templates": [
         "templates/general/soulstone_icon_torment.png",
         "templates/general/soulstone_icon_hell.png",
+        "templates/general/soulstone_icon_nightmare.png",
+        "templates/general/soulstone_icon_normal.png",
     ],
     "soulstone_title_templates": {
         "torment": "templates/general/soulstone_title_torment.png",
         "hell": "templates/general/soulstone_title_hell.png",
+        "nightmare": "templates/general/soulstone_title_nightmare.png",
+        "normal": "templates/general/soulstone_title_normal.png",
     },
     "act_boss_fight_timeout_seconds": 300.0,
     "act_boss_max_attempts": 1,

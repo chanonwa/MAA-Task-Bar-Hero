@@ -49,12 +49,15 @@ if not exist "dist\%APP_NAME%\farm_plan.json" (
 if exist "dist\%APP_NAME%.zip" del /q "dist\%APP_NAME%.zip"
 
 set ZIP_OK=0
+rem A file locked during packing (for example by an antivirus scan of the fresh
+rem build) makes Compress-Archive skip it, so any error counts as a failed attempt.
 for /L %%I in (1,1,3) do (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path 'dist\%APP_NAME%\*' -DestinationPath 'dist\%APP_NAME%.zip' -Force"
-    if exist "dist\%APP_NAME%.zip" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; Compress-Archive -Path 'dist\%APP_NAME%\*' -DestinationPath 'dist\%APP_NAME%.zip' -Force"
+    if not errorlevel 1 if exist "dist\%APP_NAME%.zip" (
         set ZIP_OK=1
         goto zip_done
     )
+    if exist "dist\%APP_NAME%.zip" del /q "dist\%APP_NAME%.zip"
     echo Zip attempt %%I failed; waiting before retry...
     timeout /t 2 /nobreak >nul
 )

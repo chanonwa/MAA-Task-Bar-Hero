@@ -573,11 +573,21 @@ USE_SOULSTONES_FOR_ACT_BOSSES = env_flag(
 SOULSTONE_ICON_TEMPLATES = get_config().get("soulstone_icon_templates", [
     "templates/general/soulstone_icon_torment.png",
     "templates/general/soulstone_icon_hell.png",
+    "templates/general/soulstone_icon_nightmare.png",
+    "templates/general/soulstone_icon_normal.png",
 ])
 SOULSTONE_TITLE_TEMPLATES = get_config().get("soulstone_title_templates", {
     "torment": "templates/general/soulstone_title_torment.png",
     "hell": "templates/general/soulstone_title_hell.png",
+    "nightmare": "templates/general/soulstone_title_nightmare.png",
+    "normal": "templates/general/soulstone_title_normal.png",
 })
+# The backpack grid (7 x 3) sits under the HERO portrait; its first slot center is
+# this far from the HERO title's center.
+HERO_TITLE_TEMPLATE_PATH = "templates/general/hero_title.png"
+BACKPACK_GRID_OFFSET_FROM_HERO_TITLE = (-118, 208)
+BACKPACK_GRID_ROWS = 3
+BACKPACK_GRID_COLS = 7
 SOULSTONE_MATCH_THRESHOLD = config_non_negative_float("soulstone_match_threshold", 0.85)
 SOULSTONE_TOOLTIP_WAIT_SECONDS = config_non_negative_float("soulstone_tooltip_wait_seconds", 1.5)
 SOULSTONE_SCAN_MAX_AGE_SECONDS = 60
@@ -2909,7 +2919,7 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
     Press stash all on each configured stash tab in order (1 -> 2 -> 3 -> 4), so every
     backpack item first stacks onto a matching item on an earlier tab before it
     takes a new slot. Around blue chests and act boss fights it also notes which
-    soulstone difficulties each tab holds.
+    soulstone difficulties each tab and the backpack hold.
     """
     pages = get_stash_stack_pages()
     scan_soulstones = USE_SOULSTONES_FOR_ACT_BOSSES and context.startswith(("blue_chest", "act_boss"))
@@ -2983,6 +2993,7 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
     )
 
     if scan_soulstones:
+        found_soulstones |= scan_backpack_for_soulstones(context)
         record_soulstone_scan(found_soulstones, context)
 
     return len(stacked_pages) == len(pages)
@@ -2993,6 +3004,37 @@ def find_soulstone_slots(screenshot):
     Return the screenshot centers of soulstone icons on the open stash tab, using
     the same 7x7 grid geometry as the stash space check (anchored on the sort button).
     """
+    sort_button = find_stash_sort_button(screenshot)
+
+    if not sort_button.get("found") or sort_button.get("center") is None:
+        return []
+
+    first_center = (
+        sort_button["center"][0] + STORAGE_GRID_ANCHOR_OFFSET_X,
+        sort_button["center"][1] + STORAGE_GRID_ANCHOR_OFFSET_Y,
+    )
+    return find_soulstone_slots_in_grid(screenshot, first_center, STORAGE_GRID_ROWS, STORAGE_GRID_COLS)
+
+
+def find_backpack_soulstone_slots(screenshot):
+    """Soulstone icons in the backpack grid, anchored on the HERO title above it."""
+    try:
+        match = match_template(screenshot, load_template(HERO_TITLE_TEMPLATE_PATH))
+    except FileNotFoundError:
+        return []
+
+    if match["confidence"] < MOUSE_REST_MATCH_THRESHOLD:
+        return []
+
+    first_center = (
+        match["center"][0] + BACKPACK_GRID_OFFSET_FROM_HERO_TITLE[0],
+        match["center"][1] + BACKPACK_GRID_OFFSET_FROM_HERO_TITLE[1],
+    )
+    return find_soulstone_slots_in_grid(screenshot, first_center, BACKPACK_GRID_ROWS, BACKPACK_GRID_COLS)
+
+
+def find_soulstone_slots_in_grid(screenshot, first_center, rows, cols):
+    """Centers of the slots in an item grid that hold a soulstone icon."""
     icon_templates = []
 
     for path in SOULSTONE_ICON_TEMPLATES if isinstance(SOULSTONE_ICON_TEMPLATES, list) else []:
@@ -3004,20 +3046,17 @@ def find_soulstone_slots(screenshot):
         if template is not None:
             icon_templates.append(template)
 
-    sort_button = find_stash_sort_button(screenshot)
-
-    if not icon_templates or not sort_button.get("found") or sort_button.get("center") is None:
+    if not icon_templates:
         return []
 
-    first_x = sort_button["center"][0] + STORAGE_GRID_ANCHOR_OFFSET_X
-    first_y = sort_button["center"][1] + STORAGE_GRID_ANCHOR_OFFSET_Y
+    first_x, first_y = first_center
     pitch_x = STORAGE_GRID_SLOT_WIDTH + STORAGE_GRID_SLOT_GAP_X
     pitch_y = STORAGE_GRID_SLOT_HEIGHT + STORAGE_GRID_SLOT_GAP_Y
     half = max(STORAGE_GRID_SLOT_WIDTH, STORAGE_GRID_SLOT_HEIGHT) // 2 + 2
     slots = []
 
-    for row in range(STORAGE_GRID_ROWS):
-        for col in range(STORAGE_GRID_COLS):
+    for row in range(rows):
+        for col in range(cols):
             center_x = first_x + col * pitch_x
             center_y = first_y + row * pitch_y
             slot_img = crop(
@@ -3102,24 +3141,25 @@ def read_soulstone_difficulty(slot_center, context):
     return None
 
 
-def scan_open_stash_tab_for_soulstones(stash_name, context):
+def scan_for_soulstones(location, find_slots, context):
+    """Hover every soulstone that find_slots sees and return their difficulties."""
     try:
         screenshot = capture_window(GAME_HWND)
     except Exception as e:
-        write_log(f"Soulstone scan skipped tab: screenshot failed | stash={stash_name} | error={e}")
+        write_log(f"Soulstone scan skipped: screenshot failed | location={location} | error={e}")
         return set()
 
     if screenshot is None:
         return set()
 
     difficulties = set()
-    slots = find_soulstone_slots(screenshot)
-    write_log(f"Soulstone scan tab | stash={stash_name} | soulstones={len(slots)} | context={context}")
+    slots = find_slots(screenshot)
+    write_log(f"Soulstone scan | location={location} | soulstones={len(slots)} | context={context}")
 
     for slot_center in slots:
         difficulty = read_soulstone_difficulty(slot_center, context)
         write_log(
-            f"Soulstone found | stash={stash_name} | slot={slot_center} | "
+            f"Soulstone found | location={location} | slot={slot_center} | "
             f"difficulty={difficulty or 'unknown'} | context={context}"
         )
 
@@ -3127,10 +3167,18 @@ def scan_open_stash_tab_for_soulstones(stash_name, context):
             difficulties.add(difficulty)
 
     if slots:
-        # Close the last soulstone tooltip before the stash is read again.
-        input_controller.rest_mouse(GAME_HWND, reason=f"soulstone_scan_done:{stash_name}")
+        # Close the last soulstone tooltip before anything is read again.
+        input_controller.rest_mouse(GAME_HWND, reason=f"soulstone_scan_done:{location}")
 
     return difficulties
+
+
+def scan_open_stash_tab_for_soulstones(stash_name, context):
+    return scan_for_soulstones(stash_name, find_soulstone_slots, context)
+
+
+def scan_backpack_for_soulstones(context):
+    return scan_for_soulstones("backpack", find_backpack_soulstone_slots, context)
 
 
 def record_soulstone_scan(difficulties, context):
