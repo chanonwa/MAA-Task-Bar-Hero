@@ -481,9 +481,9 @@ class RoutePlannerApp:
                     row=row, column=column, sticky="w", padx=(0, 28), pady=2
                 )
 
-        # Boss run sub-options, indented under the Boss run tick box.
+        # Boss run sub-options, on the row under the Boss run tick box and aligned with it.
         boss_options = tk.Frame(options)
-        boss_options.grid(row=len(option_columns[0]), column=0, sticky="w", padx=(22, 0), pady=2)
+        boss_options.grid(row=len(option_columns[0]), column=0, sticky="w", pady=2)
 
         tk.Checkbutton(
             boss_options,
