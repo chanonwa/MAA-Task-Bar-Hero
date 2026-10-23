@@ -19,7 +19,7 @@ What this version adds on top of the original:
 * **Open all queued chests at once.** Chests wait in a bubble whose squares count the queue. The bot right-clicks a bubble to open every queued chest of that type, or presses Space to open every chest of every type if you tick *I own the Rune of Opening* (`has_rune_of_opening`).
 * **Templates re-captured from the current game.** The chest bubbles, stash tabs (normal and selected), and the Torment difficulty header match the live English game.
 * **Fixed recognition mode.** The recognition mode dropdown is removed and the bot always uses the balanced profile.
-* **GUI fixes.** All six route buttons stay visible, and the navigation-failure warning popup works again.
+* **GUI fixes.** All six route buttons stay visible, the navigation-failure warning popup works again, and a single *Move backpack items to storage* checkbox covers blue and brown/other chests.
 
 ---
 

@@ -258,11 +258,10 @@ class RoutePlannerApp:
         self.notified_warning_keys = set()
         self.status_var = tk.StringVar(value="Ready: choose routes, then save and start the bot.")
         self.background_input_var = tk.BooleanVar(value=False)
+        # One checkbox covers blue and brown/other chests; the bot still reads both config keys.
         self.move_to_storage_var = tk.BooleanVar(
-            value=bool(get_config().get("move_backpack_to_storage_after_blue_chest", False))
-        )
-        self.move_to_storage_after_non_blue_var = tk.BooleanVar(
-            value=config_bool_value("move_backpack_to_storage_after_non_blue_box", True)
+            value=config_bool_value("move_backpack_to_storage_after_blue_chest", False)
+            or config_bool_value("move_backpack_to_storage_after_non_blue_box", True)
         )
         self.stack_stash_var = tk.BooleanVar(
             value=config_bool_value("stack_stash_after_transfer", True)
@@ -443,7 +442,7 @@ class RoutePlannerApp:
 
         tk.Checkbutton(
             control_frame,
-            text="Move backpack items to storage after blue chest",
+            text="Move backpack items to storage",
             variable=self.move_to_storage_var,
         ).grid(row=1, column=2, columnspan=3, sticky="w", padx=(0, 10), pady=(4, 10))
 
@@ -458,12 +457,6 @@ class RoutePlannerApp:
             text="Try same-tier substitute when route navigation fails",
             variable=self.same_tier_substitution_var,
         ).grid(row=2, column=4, sticky="w", padx=(14, 10), pady=(0, 8))
-
-        tk.Checkbutton(
-            control_frame,
-            text="Move backpack items to storage after brown/other chest",
-            variable=self.move_to_storage_after_non_blue_var,
-        ).grid(row=3, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 8))
 
         tk.Checkbutton(
             control_frame,
@@ -857,9 +850,8 @@ class RoutePlannerApp:
         config["recognition_mode"] = GUI_RECOGNITION_MODE
         config["same_tier_substitution_enabled"] = bool(self.same_tier_substitution_var.get())
         config["repeat_same_level_after_blue_chest"] = bool(self.repeat_same_level_var.get())
-        config["move_backpack_to_storage_after_non_blue_box"] = bool(
-            self.move_to_storage_after_non_blue_var.get()
-        )
+        config["move_backpack_to_storage_after_blue_chest"] = bool(self.move_to_storage_var.get())
+        config["move_backpack_to_storage_after_non_blue_box"] = bool(self.move_to_storage_var.get())
         config["stack_stash_after_transfer"] = bool(self.stack_stash_var.get())
         config["has_rune_of_opening"] = bool(self.rune_of_opening_var.get())
 
@@ -1054,9 +1046,7 @@ class RoutePlannerApp:
             env["MAATBH_AUTO_OPEN_BLUE"] = "1"
             env["MAATBH_NAVIGATE_ON_START"] = "1"
             env["MAATBH_MOVE_TO_STORAGE"] = "1" if self.move_to_storage_var.get() else "0"
-            env["MAATBH_MOVE_TO_STORAGE_AFTER_NON_BLUE_BOX"] = (
-                "1" if self.move_to_storage_after_non_blue_var.get() else "0"
-            )
+            env["MAATBH_MOVE_TO_STORAGE_AFTER_NON_BLUE_BOX"] = env["MAATBH_MOVE_TO_STORAGE"]
             env["MAATBH_REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST"] = (
                 "1" if self.repeat_same_level_var.get() else "0"
             )
@@ -1068,10 +1058,6 @@ class RoutePlannerApp:
             self.write_bot_console_log(f"=== Recognition mode: {GUI_RECOGNITION_MODE} ===\n")
             self.write_bot_console_log(
                 f"=== Move backpack to storage: {'on' if self.move_to_storage_var.get() else 'off'} ===\n"
-            )
-            self.write_bot_console_log(
-                "=== Move backpack to storage after non-blue box: "
-                f"{'on' if self.move_to_storage_after_non_blue_var.get() else 'off'} ===\n"
             )
             self.write_bot_console_log(
                 f"=== Repeat same level after blue chest: {'on' if self.repeat_same_level_var.get() else 'off'} ===\n"
