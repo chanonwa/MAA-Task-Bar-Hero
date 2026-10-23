@@ -407,7 +407,7 @@ class RoutePlannerApp:
             "Instructions: choose a difficulty on the left, then choose levels and add them to the cycle list.\n"
             "The right-side list runs in a loop automatically; no duplicate entries are needed.\n"
             "Retry count is saved to each route. More features are in development; bug reports are welcome.\n"
-            "For questions or bug reports, contact Marcus-Xu-04 on GitHub or refer to the project release notes."
+            "For questions or bug reports, contact chanonwa on GitHub (github.com/chanonwa/MAA-Task-Bar-Hero) or see the release notes there."
         )
 
         tk.Label(planner_frame, text=help_text, justify="left", anchor="w").grid(
