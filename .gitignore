@@ -29,16 +29,15 @@ detection_log.txt
 bot_console_current_session.txt
 MAA-TBH-debug-*.zip
 
-# Runtime screenshots and diagnostics if written outside debug folders
-latest_raw_screenshot.png
-latest_annotated.png
-latest_diagnostic_annotated.png
-export_current_screenshot.png
-export_current_annotated.png
-stash_grid_annotated.png
-stash_last_slot_crop.png
-stash_last_slot_annotated.png
-stash_last_slot_debug.png
+# Screenshots show your game screen, account and inventory. Only the
+# recognition templates are tracked; every other image stays local.
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.webp
+!templates/**/*.png
 
 # Temporary/editor/OS files
 *.tmp

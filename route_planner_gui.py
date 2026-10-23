@@ -512,7 +512,7 @@ class RoutePlannerApp:
 
         tk.Label(
             control_frame,
-            text=f"Concept & Direction: Marcus Xu · Build v{APP_VERSION}",
+            text=f"Improvement by: Chanon Wa · Build v{APP_VERSION}",
             anchor="e",
             fg="#666666",
         ).grid(row=3, column=2, columnspan=3, sticky="e", padx=(8, 10), pady=(0, 8))
