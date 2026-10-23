@@ -68,32 +68,6 @@ def sanitize_text_for_output(value):
 
 configure_console_encoding()
 
-RECOMMENDED_GUIDE_LEVELS = [
-    "Level 80 | Torment | Chapter 1 | Level 1-3",
-    "Level 65 | Hell | Chapter 2 | Level 2-5",
-    "Level 50 | Nightmare | Chapter 3 | Level 3-5",
-    "Level 40 | Nightmare | Chapter 1 | Level 1-9",
-    "Level 30 | Normal | Chapter 3 | Level 3-8",
-    "Level 20 | Normal | Chapter 2 | Level 2-8",
-    "Level 15 | Normal | Chapter 2 | Level 2-3",
-    "Level 10 | Normal | Chapter 1 | Level 1-8",
-    "Level 5 | Normal | Chapter 1 | Level 1-4",
-    "Normal | Chapter 1 | Level 1-1",
-]
-
-RECOMMENDED_GUIDE_ROUTES = [
-    ("torment", "chapter_1", "1-3"),
-    ("hell", "chapter_2", "2-5"),
-    ("nightmare", "chapter_3", "3-5"),
-    ("nightmare", "chapter_1", "1-9"),
-    ("normal", "chapter_3", "3-8"),
-    ("normal", "chapter_2", "2-8"),
-    ("normal", "chapter_2", "2-3"),
-    ("normal", "chapter_1", "1-8"),
-    ("normal", "chapter_1", "1-4"),
-    ("normal", "chapter_1", "1-1"),
-]
-
 DIFFICULTY_OPTIONS = [
     ("normal", "Normal"),
     ("nightmare", "Nightmare"),
@@ -205,24 +179,10 @@ def parse_emergency_hotkey_config():
 
     return modifiers, key_vk, display
 
-KEY_INFO_LINES = [
-    "Before using, make sure the following are ready:",
-    "",
-    "1. Keep every extracted file in a fixed location. Do not move or delete files. Non-ASCII paths are not recommended.",
-    "2. Open the map so the level list is visible. If storage transfer is enabled, open the storage screen too.",
-    "3. Keep chest drop UI opaque, UI size at 1x, and the battle log in a fixed-window state.",
-    "4. Recommended setup is 1080p with 100% Windows scaling. 2K, 3K, and 4K are supported where possible, but not guaranteed on every device.",
-    "5. Keep game zoom at 1x / 100%. 1.25x, 1.5x, and 2x game/browser zoom are not supported.",
-    "6. MAA may take over the mouse while switching levels. Do not use the mouse until switching is complete; recovery usually settles in 10-20 seconds.",
-    "7. Emergency Stop: Ctrl + Shift + F12. This hotkey can safely stop MAA at any time.",
-]
-
 class RoutePlannerApp:
     def __init__(self, root):
         self.root = root
         self.root.title(f"MAA Task Bar Hero - v{APP_VERSION}")
-        self.root.geometry("1180x840")
-        self.root.minsize(1040, 760)
 
         self.selected_routes = []
         self.available_level_items = []
@@ -278,78 +238,20 @@ class RoutePlannerApp:
         style.configure("TLabelframe.Label", font=("Segoe UI", 11, "bold"))
 
         root.columnconfigure(0, weight=1)
-        root.rowconfigure(0, weight=0)
-        root.rowconfigure(1, weight=3)
-        root.rowconfigure(2, weight=0)
-        root.rowconfigure(3, weight=2)
+        root.rowconfigure(0, weight=3)
+        root.rowconfigure(1, weight=0)
+        root.rowconfigure(2, weight=2)
 
-        # Top: usage info on the left, recommendation guide on the right.
-        top_frame = tk.Frame(root)
-        top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
-        top_frame.columnconfigure(0, weight=1)
-        top_frame.columnconfigure(1, weight=1)
-
-        key_info_frame = tk.LabelFrame(top_frame, text="Key Info")
-        key_info_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        key_info_frame.columnconfigure(0, weight=1)
-
-        key_info_text = "\n".join(KEY_INFO_LINES)
-        key_info_label = tk.Label(
-            key_info_frame,
-            text=key_info_text,
-            anchor="nw",
-            justify="left",
-            wraplength=520,
-            fg="#333333",
-        )
-        key_info_label.grid(row=0, column=0, sticky="nsew", padx=8, pady=6)
-        # Wrap at the frame's real width so the long English lines use fewer rows.
-        key_info_label.bind(
-            "<Configure>",
-            lambda event: event.widget.configure(wraplength=max(200, event.width - 4)),
-        )
-
-        guide_frame = tk.LabelFrame(top_frame, text="Recommended Farming Guide")
-        guide_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        guide_frame.columnconfigure(0, weight=1)
-
-        guide_text = "\n".join(RECOMMENDED_GUIDE_LEVELS)
-        tk.Label(
-            guide_frame,
-            text=guide_text,
-            anchor="w",
-            justify="left",
-            wraplength=440,
-            fg="#333333",
-        ).grid(row=0, column=0, sticky="ew", padx=8, pady=6)
-
-        guide_button_frame = tk.Frame(guide_frame)
-        guide_button_frame.grid(row=0, column=1, sticky="e", padx=8, pady=6)
-
-        tk.Button(
-            guide_button_frame,
-            text="Use Recommended",
-            width=16,
-            command=self.load_recommended_plan,
-        ).grid(row=0, column=0, pady=(0, 4))
-
-        tk.Button(
-            guide_button_frame,
-            text="Save and Start",
-            width=16,
-            command=self.start_recommended_plan,
-        ).grid(row=1, column=0)
-
-        # Middle: route planner.
+        # Top: route planner.
         planner_frame = tk.LabelFrame(root, text="Route Selection")
-        planner_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=4)
+        planner_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
         planner_frame.columnconfigure(0, weight=1)
-        planner_frame.columnconfigure(2, weight=1)
+        planner_frame.columnconfigure(1, weight=1)
         planner_frame.rowconfigure(2, weight=1)
 
         # Left: difficulty dropdown + filtered levels.
         filter_frame = tk.Frame(planner_frame)
-        filter_frame.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=(8, 4))
+        filter_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4))
         filter_frame.columnconfigure(1, weight=1)
 
         tk.Label(filter_frame, text="Difficulty:").grid(row=0, column=0, sticky="w")
@@ -366,28 +268,31 @@ class RoutePlannerApp:
             row=1, column=0, sticky="n", padx=(0, 10), pady=(0, 0)
         )
 
-        self.available_listbox = tk.Listbox(planner_frame, width=52, height=16, exportselection=False)
-        self.available_listbox.grid(row=2, column=0, sticky="nsew", padx=(8, 10), pady=(24, 8))
-
-        # Middle buttons.
-        button_frame = tk.Frame(planner_frame)
-        button_frame.grid(row=2, column=1, sticky="n", padx=8, pady=(24, 8))
-
-        # Two columns so all six buttons stay visible when the window is short.
-        tk.Button(button_frame, text="Add →", width=11, command=self.add_selected).grid(row=0, column=0, padx=2, pady=4)
-        tk.Button(button_frame, text="← Remove", width=11, command=self.remove_selected).grid(row=0, column=1, padx=2, pady=4)
-        tk.Button(button_frame, text="Move Up", width=11, command=self.move_up).grid(row=1, column=0, padx=2, pady=4)
-        tk.Button(button_frame, text="Move Down", width=11, command=self.move_down).grid(row=1, column=1, padx=2, pady=4)
-        tk.Button(button_frame, text="Clear All", width=11, command=self.clear_plan).grid(row=2, column=0, padx=2, pady=4)
-        tk.Button(button_frame, text="Load Routes", width=11, command=self.load_existing_plan).grid(row=2, column=1, padx=2, pady=4)
+        self.available_listbox = tk.Listbox(planner_frame, width=40, height=16, exportselection=False)
+        self.available_listbox.grid(row=2, column=0, sticky="nsew", padx=(8, 6), pady=(4, 4))
 
         # Right: selected plan.
         tk.Label(planner_frame, text="Current Farming Cycle").grid(
-            row=1, column=2, sticky="n", padx=(10, 0), pady=(0, 0)
+            row=1, column=1, sticky="n", padx=(6, 0), pady=(0, 0)
         )
 
-        self.plan_listbox = tk.Listbox(planner_frame, width=52, height=16, exportselection=False)
-        self.plan_listbox.grid(row=2, column=2, sticky="nsew", padx=(10, 8), pady=(24, 8))
+        self.plan_listbox = tk.Listbox(planner_frame, width=40, height=16, exportselection=False)
+        self.plan_listbox.grid(row=2, column=1, sticky="nsew", padx=(6, 8), pady=(4, 4))
+
+        # All six route buttons on one row under the lists, so no button column
+        # sits between them and the window can be narrower.
+        button_frame = tk.Frame(planner_frame)
+        button_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
+
+        for column, (text, command) in enumerate((
+            ("Add →", self.add_selected),
+            ("← Remove", self.remove_selected),
+            ("Move Up", self.move_up),
+            ("Move Down", self.move_down),
+            ("Clear All", self.clear_plan),
+            ("Load Routes", self.load_existing_plan),
+        )):
+            tk.Button(button_frame, text=text, width=11, command=command).grid(row=0, column=column, padx=2)
 
         # Help text.
         help_text = (
@@ -397,26 +302,30 @@ class RoutePlannerApp:
             "For questions or bug reports, contact chanonwa on GitHub (github.com/chanonwa/MAA-Task-Bar-Hero) or see the release notes there."
         )
 
-        tk.Label(planner_frame, text=help_text, justify="left", anchor="w").grid(
-            row=3, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8)
+        help_label = tk.Label(planner_frame, text=help_text, justify="left", anchor="w", wraplength=600)
+        help_label.grid(row=4, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+        # Wrap at the section's real width so the text never forces the window wider.
+        planner_frame.bind(
+            "<Configure>",
+            lambda event: help_label.configure(wraplength=max(300, event.width - 24)),
         )
 
         # Controls.
         control_frame = tk.LabelFrame(root, text="Bot Control")
-        control_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 8))
+        control_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
         control_frame.columnconfigure(4, weight=1)
 
         tk.Button(
             control_frame,
             text="Save and Start",
-            width=18,
+            width=14,
             command=self.start_bot,
         ).grid(row=0, column=0, padx=(10, 8), pady=(10, 4))
 
         tk.Button(
             control_frame,
             text="Stop",
-            width=14,
+            width=10,
             command=self.stop_bot,
         ).grid(row=0, column=1, padx=(0, 12), pady=(10, 4))
 
@@ -444,16 +353,16 @@ class RoutePlannerApp:
         tk.Button(
             tools,
             text="Export Debug ZIP",
-            width=18,
+            width=16,
             command=self.export_debug_zip,
         ).grid(row=0, column=0, sticky="w")
 
         self.hotkey_label = tk.Label(
             tools,
-            text=f"Emergency stop hotkey: {self.emergency_hotkey_display}",
+            text=f"Emergency stop hotkey:\n{self.emergency_hotkey_display}",
             anchor="w",
             justify="left",
-            wraplength=250,
+            wraplength=190,
             fg="#444444",
         )
         self.hotkey_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
@@ -478,7 +387,7 @@ class RoutePlannerApp:
         for column, column_options in enumerate(option_columns):
             for row, (text, variable) in enumerate(column_options):
                 tk.Checkbutton(options, text=text, variable=variable).grid(
-                    row=row, column=column, sticky="w", padx=(0, 28), pady=2
+                    row=row, column=column, sticky="w", padx=(0, 12), pady=2
                 )
 
         # Boss run sub-options, on the row under the Boss run tick box and aligned with it.
@@ -509,7 +418,7 @@ class RoutePlannerApp:
 
         # Log panel.
         log_frame = tk.LabelFrame(root, text="Bot Log")
-        log_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        log_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
 
@@ -520,6 +429,11 @@ class RoutePlannerApp:
             wrap="word",
         )
         self.log_text.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+
+        # Open as narrow as the layout allows; the window may not shrink below that.
+        root.update_idletasks()
+        root.minsize(root.winfo_reqwidth(), 548)
+        root.geometry(f"{root.winfo_reqwidth()}x628")
 
         self.populate_available_levels()
         self.load_existing_plan(silent=True)
@@ -766,60 +680,6 @@ class RoutePlannerApp:
             self.close_bot_log_handle()
             self.cleanup_after_clean_stop(process_exit_code=None, closing=False)
             self.status_var.set("Emergency stop executed: bot stopped.")
-
-    def find_available_level(self, difficulty, chapter, level_name):
-        for level in AVAILABLE_LEVELS:
-            if (
-                level.get("difficulty") == difficulty
-                and level.get("chapter") == chapter
-                and level.get("level") == level_name
-            ):
-                return level
-
-        return None
-
-    def build_recommended_plan(self):
-        plan = []
-        missing = []
-
-        for difficulty, chapter, level_name in RECOMMENDED_GUIDE_ROUTES:
-            level = self.find_available_level(difficulty, chapter, level_name)
-
-            if level is None or not level.get("enabled", True):
-                missing.append(f"{difficulty} {level_name}")
-                continue
-
-            plan.append(level.copy())
-
-        return plan, missing
-
-    def load_recommended_plan(self, show_message=True):
-        plan, missing = self.build_recommended_plan()
-
-        if not plan:
-            messagebox.showwarning("Recommended routes unavailable", "No available recommended routes were found.")
-            return False
-
-        self.selected_routes = plan
-        self.refresh_plan_listbox()
-        self.status_var.set(f"Loaded {len(plan)} recommended route(s).")
-
-        if show_message:
-            if missing:
-                messagebox.showwarning(
-                    "Some recommended routes are missing",
-                    "Loaded available recommended routes. These targets are unavailable:\n" + "\n".join(missing),
-                )
-            else:
-                messagebox.showinfo("Recommended routes loaded", f"Loaded {len(plan)} recommended route(s).")
-
-        return True
-
-    def start_recommended_plan(self):
-        if not self.load_recommended_plan(show_message=False):
-            return
-
-        self.start_bot()
 
     def get_default_no_chest_retries(self):
         config = get_config()
