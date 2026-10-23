@@ -143,9 +143,13 @@ DEFAULT_CONFIG = {
     "open_all_boxes_on_same_level": True,
     "has_rune_of_opening": False,
     "use_soulstones_for_act_bosses": False,
-    "soulstone_icon_template": "templates/general/soulstone.png",
+    "soulstone_icon_templates": [
+        "templates/general/soulstone_icon_torment.png",
+        "templates/general/soulstone_icon_hell.png",
+    ],
     "soulstone_title_templates": {
         "torment": "templates/general/soulstone_title_torment.png",
+        "hell": "templates/general/soulstone_title_hell.png",
     },
     "act_boss_fight_timeout_seconds": 300.0,
     "act_boss_max_attempts": 1,

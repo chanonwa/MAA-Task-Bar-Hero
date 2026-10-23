@@ -557,10 +557,15 @@ USE_SOULSTONES_FOR_ACT_BOSSES = env_flag(
     "MAATBH_USE_SOULSTONES",
     config_bool("use_soulstones_for_act_bosses", False),
 )
-SOULSTONE_ICON_TEMPLATE = get_config().get("soulstone_icon_template", "templates/general/soulstone.png")
-# The icon is the same for every difficulty; the hover tooltip title tells them apart.
+# Each difficulty's soulstone has its own icon; the hover tooltip title confirms
+# the difficulty.
+SOULSTONE_ICON_TEMPLATES = get_config().get("soulstone_icon_templates", [
+    "templates/general/soulstone_icon_torment.png",
+    "templates/general/soulstone_icon_hell.png",
+])
 SOULSTONE_TITLE_TEMPLATES = get_config().get("soulstone_title_templates", {
     "torment": "templates/general/soulstone_title_torment.png",
+    "hell": "templates/general/soulstone_title_hell.png",
 })
 SOULSTONE_MATCH_THRESHOLD = config_non_negative_float("soulstone_match_threshold", 0.85)
 SOULSTONE_TOOLTIP_WAIT_SECONDS = config_non_negative_float("soulstone_tooltip_wait_seconds", 1.5)
@@ -1376,7 +1381,9 @@ def get_startup_template_specs():
     add_template_spec(specs, seen_paths, "general:blue_chest", "templates/general/chest_blue.png")
     add_template_spec(specs, seen_paths, "general:brown_chest", "templates/general/chest_brown.png")
     add_template_spec(specs, seen_paths, "general:act_boss_chest", ACT_BOSS_CHEST_TEMPLATE)
-    add_template_spec(specs, seen_paths, "general:soulstone", SOULSTONE_ICON_TEMPLATE)
+    if isinstance(SOULSTONE_ICON_TEMPLATES, list):
+        for index, path in enumerate(SOULSTONE_ICON_TEMPLATES, start=1):
+            add_template_spec(specs, seen_paths, f"general:soulstone_icon_{index}", path)
 
     if isinstance(SOULSTONE_TITLE_TEMPLATES, dict):
         for difficulty, path in SOULSTONE_TITLE_TEMPLATES.items():
@@ -2958,10 +2965,20 @@ def find_soulstone_slots(screenshot):
     Return the screenshot centers of soulstone icons on the open stash tab, using
     the same 7x7 grid geometry as the stash space check (anchored on the sort button).
     """
-    template = load_template(SOULSTONE_ICON_TEMPLATE)
+    icon_templates = []
+
+    for path in SOULSTONE_ICON_TEMPLATES if isinstance(SOULSTONE_ICON_TEMPLATES, list) else []:
+        try:
+            template = load_template(path)
+        except FileNotFoundError:
+            continue
+
+        if template is not None:
+            icon_templates.append(template)
+
     sort_button = find_stash_sort_button(screenshot)
 
-    if template is None or not sort_button.get("found") or sort_button.get("center") is None:
+    if not icon_templates or not sort_button.get("found") or sort_button.get("center") is None:
         return []
 
     first_x = sort_button["center"][0] + STORAGE_GRID_ANCHOR_OFFSET_X
@@ -2983,7 +3000,10 @@ def find_soulstone_slots(screenshot):
             if slot_img is None:
                 continue
 
-            if match_template(slot_img, template)["confidence"] >= SOULSTONE_MATCH_THRESHOLD:
+            if any(
+                match_template(slot_img, template)["confidence"] >= SOULSTONE_MATCH_THRESHOLD
+                for template in icon_templates
+            ):
                 slots.append((center_x, center_y))
 
     return slots
@@ -3065,8 +3085,10 @@ def scan_open_stash_tab_for_soulstones(stash_name, context):
         return set()
 
     difficulties = set()
+    slots = find_soulstone_slots(screenshot)
+    write_log(f"Soulstone scan tab | stash={stash_name} | soulstones={len(slots)} | context={context}")
 
-    for slot_center in find_soulstone_slots(screenshot):
+    for slot_center in slots:
         difficulty = read_soulstone_difficulty(slot_center, context)
         write_log(
             f"Soulstone found | stash={stash_name} | slot={slot_center} | "
