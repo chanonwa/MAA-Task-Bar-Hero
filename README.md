@@ -10,7 +10,7 @@ Concept and direction by **Marcus-Xu-04**. Built with Codex as a coding assistan
 
 ## Extended Version
 
-This repository is [chanonwa](https://github.com/chanonwa)'s version of MAA TaskBar Hero, built on and extended from Marcus-Xu-04's original version at [Marcus-Xu-04/MAA-Task-Bar-Hero](https://github.com/Marcus-Xu-04/MAA-Task-Bar-Hero). It is maintained separately, and changes made here are not sent back to the original project.
+This repository is [chanonwa](https://github.com/chanonwa)'s version of MAA TaskBar Hero, built on and extended from Marcus-Xu-04's original version at [Marcus-Xu-04/MAA-Task-Bar-Hero](https://github.com/Marcus-Xu-04/MAA-Task-Bar-Hero). It is maintained as a separate repository: changes made here are not sent back to the original project, and updates from the original are not pulled in.
 
 What this version adds on top of the original:
 
