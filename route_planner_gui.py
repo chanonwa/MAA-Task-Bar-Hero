@@ -18,7 +18,7 @@ from tkinter import scrolledtext
 from tkinter import messagebox
 from tkinter import ttk
 
-from config import CONFIG_FILE_NAME, get_base_dir, get_config
+from config import APP_VERSION, CONFIG_FILE_NAME, get_base_dir, get_config
 from debug_files import (
     clear_generated_debug_files,
     export_debug_zip,
@@ -33,7 +33,6 @@ BASE_DIR = get_base_dir()
 OUTPUT_FILE = BASE_DIR / "farm_plan.json"
 MAIN_FILE = BASE_DIR / "main.py"
 BOT_CONSOLE_LOG = BASE_DIR / "bot_console.log"
-APP_VERSION = "v1.2, 2026-06-12"
 
 INVISIBLE_UNICODE_TRANSLATION = {
     ord("\u200b"): None,
@@ -234,7 +233,7 @@ KEY_INFO_LINES = [
 class RoutePlannerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"MAA Task Bar Hero - {APP_VERSION}")
+        self.root.title(f"MAA Task Bar Hero - v{APP_VERSION}")
         self.root.geometry("1180x840")
         self.root.minsize(1040, 760)
 
@@ -522,7 +521,7 @@ class RoutePlannerApp:
 
         tk.Label(
             control_frame,
-            text=f"Concept & Direction: Marcus Xu · Build {APP_VERSION}",
+            text=f"Concept & Direction: Marcus Xu · Build v{APP_VERSION}",
             anchor="e",
             fg="#666666",
         ).grid(row=5, column=2, columnspan=3, sticky="e", padx=(8, 10), pady=(0, 8))
