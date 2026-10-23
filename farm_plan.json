@@ -1,12 +1,12 @@
 [
     {
         "name": "Route 1",
-        "display_name": "Level 80 | Torment | Chapter 3 | Level 3-9",
+        "display_name": "Level 80 | Torment | Chapter 3 | Level 3-1",
         "chest_tier": 80,
         "difficulty": "torment",
         "chapter": "chapter_3",
-        "level": "3-9",
-        "level_template": "templates/levels/level_3_9.png",
+        "level": "3-1",
+        "level_template": "templates/levels/level_3_1.png",
         "level_match_threshold": 0.88,
         "search_order": [
             "up",

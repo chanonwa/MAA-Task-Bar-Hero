@@ -295,7 +295,10 @@ def find_window_by_title_keyword(keyword: str):
 
         return None, None
 
-    return matched_windows[0]
+    # Prefer the window titled exactly like the keyword: editors and browsers can
+    # contain it too (e.g. VS Code showing a folder named auto_taskbarhero).
+    exact_matches = [window for window in matched_windows if str(window[1]).strip() == keyword]
+    return (exact_matches or matched_windows)[0]
 
 
 def capture_window(hwnd):
@@ -498,6 +501,18 @@ def detect_chests_in_region(region_img, blue_template=None, brown_template=None,
                 "type": "brown",
                 **brown,
             })
+
+    # Blue and brown chest bubbles share the same chest art, so one bubble can match
+    # both templates. Matches on the same spot are one bubble: keep the stronger type.
+    if len(detections) == 2:
+        first, second = detections
+        width, height = first["size"]
+
+        if (
+            abs(first["center"][0] - second["center"][0]) < width // 2
+            and abs(first["center"][1] - second["center"][1]) < height // 2
+        ):
+            detections = [max(detections, key=lambda det: det["confidence"])]
 
     return detections
 

@@ -21,6 +21,7 @@
     "stop_if_blue_chest_found": true,
     "repeat_same_level_after_blue_chest": true,
     "open_all_boxes_on_same_level": true,
+    "has_rune_of_opening": true,
     "recover_orphan_blue_chest_before_boss": true,
     "orphan_blue_chest_confirm_cycles": 2,
     "orphan_blue_chest_near_threshold_margin": 0.03,
@@ -66,6 +67,11 @@
         "stash_2": "templates/general/stash_2.png",
         "stash_3": "templates/general/stash_3.png",
         "stash_4": "templates/general/stash_4.png"
+    },
+    "stash_tab_selected_templates": {
+        "stash_1": "templates/general/stash_1_selected.png",
+        "stash_2": "templates/general/stash_2_selected.png",
+        "stash_3": "templates/general/stash_3_selected.png"
     },
     "stash_last_slot_anchor_offset_x": -9,
     "stash_last_slot_anchor_offset_y": -55,

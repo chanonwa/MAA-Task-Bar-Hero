@@ -15,7 +15,9 @@ This repository is [chanonwa](https://github.com/chanonwa)'s version of MAA Task
 What this version adds on top of the original:
 
 * **English-only.** The application GUI is in English, and the visual templates are captured from the English game UI. The Chinese GUI and templates have been removed.
-* **Stash stacking after drops.** After a chest is opened and the backpack is stashed, the bot visits stash tabs 1-3 and presses Stash All on each, so leftover items merge into existing stacks. Toggle it with the GUI checkbox or `stack_stash_after_transfer`; choose the tabs with `stash_stack_pages`.
+* **Stash stacking after drops.** After chests are opened, the bot goes to stash tab 1 and presses Stash All, then tab 2, then tab 3, so each item stacks onto a matching item on an earlier tab before it takes a new slot. Toggle it with the GUI checkbox or `stack_stash_after_transfer` (off falls back to a single Stash All on a tab with free space); choose the tabs with `stash_stack_pages`.
+* **Open all queued chests at once.** Chests wait in a bubble whose squares count the queue. The bot right-clicks a bubble to open every queued chest of that type, or presses Space to open every chest of every type if you tick *I own the Rune of Opening* (`has_rune_of_opening`).
+* **Templates re-captured from the current game.** The chest bubbles, stash tabs (normal and selected), and the Torment difficulty header match the live English game.
 * **Fixed recognition mode.** The recognition mode dropdown is removed and the bot always uses the balanced profile.
 * **GUI fixes.** All six route buttons stay visible, and the navigation-failure warning popup works again.
 
@@ -73,8 +75,6 @@ Multi-monitor setups, negative-coordinate monitor layouts, and high-resolution d
 The application GUI is in English, and the templates in `templates/` are captured from the **English** game UI, so set the game language to English.
 
 MAA TaskBar Hero relies on screenshot templates for difficulty buttons, chapter tabs, level labels, boss warnings, chest drops, storage/backpack buttons, stash tabs, and other UI elements. If the game UI uses a different language, the templates inside the `templates/` folder need to be replaced.
-
-Known gap: `templates/difficulty/anchor_difficulty_torment.png` is still captured from the Chinese game UI (the upstream English package ships the same file), so Torment difficulty verification may fail until it is re-captured from the English game.
 
 In short:
 

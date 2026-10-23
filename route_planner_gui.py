@@ -267,6 +267,9 @@ class RoutePlannerApp:
         self.stack_stash_var = tk.BooleanVar(
             value=config_bool_value("stack_stash_after_transfer", True)
         )
+        self.rune_of_opening_var = tk.BooleanVar(
+            value=config_bool_value("has_rune_of_opening", False)
+        )
         self.repeat_same_level_var = tk.BooleanVar(
             value=config_bool_value("repeat_same_level_after_blue_chest", False)
         )
@@ -464,9 +467,15 @@ class RoutePlannerApp:
 
         tk.Checkbutton(
             control_frame,
-            text="Stash all again on stash tabs 1-3 to stack items",
+            text="Stash All on stash tabs 1, 2, 3 in order (stacks items)",
             variable=self.stack_stash_var,
         ).grid(row=3, column=4, sticky="w", padx=(14, 10), pady=(0, 8))
+
+        tk.Checkbutton(
+            control_frame,
+            text="I own the Rune of Opening (Space opens all chests)",
+            variable=self.rune_of_opening_var,
+        ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 8))
 
         tk.Entry(
             control_frame,
@@ -852,6 +861,7 @@ class RoutePlannerApp:
             self.move_to_storage_after_non_blue_var.get()
         )
         config["stack_stash_after_transfer"] = bool(self.stack_stash_var.get())
+        config["has_rune_of_opening"] = bool(self.rune_of_opening_var.get())
 
         with config_path.open("w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
@@ -1051,6 +1061,7 @@ class RoutePlannerApp:
                 "1" if self.repeat_same_level_var.get() else "0"
             )
             env["MAATBH_STACK_STASH_AFTER_TRANSFER"] = "1" if self.stack_stash_var.get() else "0"
+            env["MAATBH_HAS_RUNE_OF_OPENING"] = "1" if self.rune_of_opening_var.get() else "0"
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             self.write_bot_console_log(f"=== Input mode: {input_mode} ===\n")
@@ -1067,6 +1078,9 @@ class RoutePlannerApp:
             )
             self.write_bot_console_log(
                 f"=== Stack stash pages after transfer: {'on' if self.stack_stash_var.get() else 'off'} ===\n"
+            )
+            self.write_bot_console_log(
+                f"=== Rune of Opening (Space opens all chests): {'on' if self.rune_of_opening_var.get() else 'off'} ===\n"
             )
             bot_command = (
                 [sys.executable, "--bot"]

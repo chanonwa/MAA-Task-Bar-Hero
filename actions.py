@@ -11,6 +11,12 @@ import win32con
 import win32gui
 
 
+# Keys press_window_key can post in background input mode.
+BACKGROUND_KEY_CODES = {
+    "space": win32con.VK_SPACE,
+}
+
+
 class InputController:
     """
     Mouse, keyboard, and window-input behavior.
@@ -407,7 +413,7 @@ class InputController:
             )
             return False
 
-    def safe_pyautogui_click(self, screen_x, screen_y, label="mouse_click"):
+    def safe_pyautogui_click(self, screen_x, screen_y, label="mouse_click", button="left"):
         if self.is_screen_point_fail_safe_risky(screen_x, screen_y):
             self.write_log(
                 f"Mouse click failed safely | label={label} | "
@@ -417,7 +423,7 @@ class InputController:
             return False
 
         try:
-            pyautogui.click(screen_x, screen_y)
+            pyautogui.click(screen_x, screen_y, button=button)
             return True
         except pyautogui.FailSafeException:
             self.write_log(
@@ -738,7 +744,15 @@ class InputController:
         time.sleep(self.mouse_parking_wait_seconds)
         return True
 
-    def background_click_window_point(self, hwnd, local_x, local_y, label="", coordinate_space="screenshot"):
+    def background_click_window_point(
+        self,
+        hwnd,
+        local_x,
+        local_y,
+        label="",
+        coordinate_space="screenshot",
+        button="left",
+    ):
         """
         Send a background click to the game window without moving the real mouse.
         """
@@ -758,7 +772,7 @@ class InputController:
         lparam = self.make_lparam(client_x, client_y)
 
         self.write_log(
-            f"Background click | label={label} | "
+            f"Background click | label={label} | button={button} | "
             f"coordinate_space={coordinate_space} | "
             f"local=({local_x}, {local_y}) | "
             f"client=({client_x}, {client_y}) | "
@@ -768,15 +782,58 @@ class InputController:
             f"client_origin={self.format_diag_value(client_origin)}"
         )
 
+        if button == "right":
+            down_message, down_flag, up_message = win32con.WM_RBUTTONDOWN, win32con.MK_RBUTTON, win32con.WM_RBUTTONUP
+        else:
+            down_message, down_flag, up_message = win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, win32con.WM_LBUTTONUP
+
         win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
         time.sleep(0.05)
 
-        win32gui.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+        win32gui.PostMessage(hwnd, down_message, down_flag, lparam)
         time.sleep(0.08)
 
-        win32gui.PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+        win32gui.PostMessage(hwnd, up_message, 0, lparam)
         time.sleep(self.nav_click_delay_seconds)
 
+        return True
+
+    def press_window_key(self, hwnd, key, label=""):
+        """
+        Press one key in the game window. The key only goes out once the game is
+        confirmed to be the foreground window, so it can never land in another app.
+        """
+        self.write_log(
+            f"Press window key | label={label} | key={key} | "
+            f"background_input={self.use_background_input}"
+        )
+
+        if self.use_background_input:
+            virtual_key = BACKGROUND_KEY_CODES.get(key)
+
+            if virtual_key is None:
+                self.write_log(f"Key press failed safely | label={label} | reason=unsupported_background_key:{key}")
+                return False
+
+            win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, virtual_key, 0)
+            time.sleep(0.05)
+            win32gui.PostMessage(hwnd, win32con.WM_KEYUP, virtual_key, 0)
+            time.sleep(self.nav_click_delay_seconds)
+            return True
+
+        self.focus_window(hwnd)
+
+        if win32gui.GetForegroundWindow() != hwnd:
+            self.write_log(f"Key press failed safely | label={label} | reason=game_window_not_foreground")
+            return False
+
+        try:
+            pyautogui.press(key)
+        except Exception as e:
+            self.write_log(f"Key press failed safely | label={label} | reason={e}")
+            return False
+
+        time.sleep(self.nav_click_delay_seconds)
         return True
 
     def background_scroll_window_point(
@@ -831,7 +888,7 @@ class InputController:
         time.sleep(0.5)
         return True
 
-    def click_window_point(self, hwnd, local_x, local_y, label="", coordinate_space="screenshot"):
+    def click_window_point(self, hwnd, local_x, local_y, label="", coordinate_space="screenshot", button="left"):
         """
         Click a point using local captured-window coordinates.
         Uses either real mouse or background window message depending on settings.
@@ -843,6 +900,7 @@ class InputController:
                 local_y,
                 label=label,
                 coordinate_space=coordinate_space,
+                button=button,
             )
 
         window_rect = win32gui.GetWindowRect(hwnd)
@@ -860,7 +918,7 @@ class InputController:
             scaling_status = {"active": False, "reason": f"{coordinate_space}_coordinate_space"}
 
         self.write_log(
-            f"Click window point | label={label} | "
+            f"Click window point | label={label} | button={button} | "
             f"coordinate_space={coordinate_space} | "
             f"local=({local_x}, {local_y}) | "
             f"client=({client_x}, {client_y}) | "
@@ -884,7 +942,7 @@ class InputController:
         ):
             return False
 
-        if not self.safe_pyautogui_click(screen_x, screen_y, label=label):
+        if not self.safe_pyautogui_click(screen_x, screen_y, label=label, button=button):
             return False
 
         time.sleep(self.nav_click_delay_seconds)

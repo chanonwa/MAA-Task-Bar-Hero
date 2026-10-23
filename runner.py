@@ -513,6 +513,11 @@ REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST = env_flag(
     config_bool("repeat_same_level_after_blue_chest", False),
 )
 OPEN_ALL_BOXES_ON_SAME_LEVEL = config_bool("open_all_boxes_on_same_level", True)
+# With the Rune of Opening, Space opens every queued chest of every type at once.
+HAS_RUNE_OF_OPENING = env_flag(
+    "MAATBH_HAS_RUNE_OF_OPENING",
+    config_bool("has_rune_of_opening", False),
+)
 NON_BLUE_BOX_CLICK_COOLDOWN_SECONDS = config_non_negative_float(
     "non_blue_box_click_cooldown_seconds",
     1.0,
@@ -550,6 +555,12 @@ STASH_TAB_TEMPLATES = get_config().get("stash_tab_templates", {
     "stash_2": "templates/general/stash_2.png",
     "stash_3": "templates/general/stash_3.png",
     "stash_4": "templates/general/stash_4.png",
+})
+# How each tab looks while it is the open page (brighter and taller than the others).
+STASH_TAB_SELECTED_TEMPLATES = get_config().get("stash_tab_selected_templates", {
+    "stash_1": "templates/general/stash_1_selected.png",
+    "stash_2": "templates/general/stash_2_selected.png",
+    "stash_3": "templates/general/stash_3_selected.png",
 })
 STACK_STASH_AFTER_TRANSFER = env_flag(
     "MAATBH_STACK_STASH_AFTER_TRANSFER",
@@ -1354,6 +1365,7 @@ def log_recognition_profile_startup():
         f"max_consecutive_navigation_skips={MAX_CONSECUTIVE_NAVIGATION_SKIPS} | "
         f"repeat_same_level_after_blue_chest={REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST} | "
         f"open_all_boxes_on_same_level={OPEN_ALL_BOXES_ON_SAME_LEVEL} | "
+        f"has_rune_of_opening={HAS_RUNE_OF_OPENING} | "
         f"non_blue_box_click_cooldown={NON_BLUE_BOX_CLICK_COOLDOWN_SECONDS:.2f}s | "
         f"recover_orphan_blue_chest_before_boss={RECOVER_ORPHAN_BLUE_CHEST_BEFORE_BOSS} | "
         f"orphan_blue_chest_confirm_cycles={ORPHAN_BLUE_CHEST_CONFIRM_CYCLES} | "
@@ -1408,6 +1420,10 @@ def get_startup_template_specs():
     if isinstance(STASH_TAB_TEMPLATES, dict):
         for stash_name, path in STASH_TAB_TEMPLATES.items():
             add_template_spec(specs, seen_paths, f"general:{stash_name}", path)
+
+    if isinstance(STASH_TAB_SELECTED_TEMPLATES, dict):
+        for stash_name, path in STASH_TAB_SELECTED_TEMPLATES.items():
+            add_template_spec(specs, seen_paths, f"general:{stash_name}_selected", path)
 
     for difficulty, templates in DIFFICULTY_TEMPLATES.items():
         for role, path in templates.items():
@@ -1685,6 +1701,29 @@ def get_non_blue_box_open_guard_reason(clear_visible=False):
     return None
 
 
+def open_queued_chests(hwnd, local_x, local_y, chest_type):
+    """
+    Open every queued chest in one action. Chests wait in a bubble whose squares
+    count the queue: right-clicking the bubble opens all chests of that type, and
+    with the Rune of Opening, Space opens all chests of every type.
+    """
+    if HAS_RUNE_OF_OPENING:
+        write_log(f"Opening all queued chests with Space (Rune of Opening) | trigger={chest_type}")
+        return input_controller.press_window_key(hwnd, "space", label=f"open_all_chests_{chest_type}")
+
+    write_log(
+        f"Opening all queued {chest_type} chests with right-click | "
+        f"center=({local_x}, {local_y})"
+    )
+    return click_window_point(
+        hwnd,
+        local_x,
+        local_y,
+        label=f"open_all_{chest_type}_chests",
+        button="right",
+    )
+
+
 def click_non_blue_box_once(hwnd, detections):
     non_blue_detections = [d for d in detections if d.get("type") != "blue"]
 
@@ -1711,12 +1750,7 @@ def click_non_blue_box_once(hwnd, detections):
         f"region={best_box.get('region_name')}"
     )
 
-    click_ok = click_window_point(
-        hwnd,
-        local_x,
-        local_y,
-        label=f"same_level_{box_type}_box",
-    )
+    click_ok = open_queued_chests(hwnd, local_x, local_y, box_type)
 
     if not click_ok:
         write_log(
@@ -2490,13 +2524,15 @@ def handle_bot_state(
     }
 
 
-def get_stash_tab_templates():
-    if not isinstance(STASH_TAB_TEMPLATES, dict):
+def get_stash_tab_templates(selected=False):
+    templates = STASH_TAB_SELECTED_TEMPLATES if selected else STASH_TAB_TEMPLATES
+
+    if not isinstance(templates, dict):
         return {}
 
     return {
         stash_name: path
-        for stash_name, path in STASH_TAB_TEMPLATES.items()
+        for stash_name, path in templates.items()
         if stash_name in STASH_PAGE_ORDER and path
     }
 
@@ -2514,7 +2550,8 @@ def next_stash_page_name(current_stash):
 
 
 def detect_storage_stash_page(screenshot):
-    templates = get_stash_tab_templates()
+    # Every tab is always visible, so only the selected-tab look tells which page is open.
+    templates = get_stash_tab_templates(selected=True) or get_stash_tab_templates()
 
     if not templates:
         return {
@@ -2661,32 +2698,51 @@ def sort_current_stash_before_full_check(hwnd, screenshot, stash_label, attempt,
 
 
 def click_stash_page_tab(hwnd, screenshot, stash_name):
-    templates = get_stash_tab_templates()
-    template_path = templates.get(stash_name)
+    # Tabs differ only by their number, so one look can score high on a neighbouring
+    # tab; trying both looks and keeping the best score lands on the right one.
+    template_paths = [
+        path
+        for path in (
+            get_stash_tab_templates().get(stash_name),
+            get_stash_tab_templates(selected=True).get(stash_name),
+        )
+        if path
+    ]
 
-    if not template_path:
+    if not template_paths:
         write_log(f"Stash switch failed: template missing from config | stash={stash_name}")
         return False
 
-    try:
-        found, center, confidence, _match_info = find_template_in_box(
-            screenshot,
-            template_path,
-            get_storage_stash_search_region(),
-            STASH_TAB_MATCH_THRESHOLD,
-            label=f"select_{stash_name}",
-        )
-    except Exception as e:
-        write_log(
-            f"Stash switch failed: target tab detection error | "
-            f"target={stash_name} | path={template_path} | error={e}"
-        )
-        return False
+    found, center, confidence, template_path = False, None, 0.0, None
+
+    for path in template_paths:
+        try:
+            path_found, path_center, path_confidence, _match_info = find_template_in_box(
+                screenshot,
+                path,
+                get_storage_stash_search_region(),
+                STASH_TAB_MATCH_THRESHOLD,
+                label=f"select_{stash_name}",
+            )
+        except Exception as e:
+            write_log(
+                f"Stash switch failed: target tab detection error | "
+                f"target={stash_name} | path={path} | error={e}"
+            )
+            return False
+
+        if path_confidence > confidence:
+            found, center, confidence, template_path = (
+                path_found,
+                path_center,
+                path_confidence,
+                path,
+            )
 
     write_log(
         f"Stash tab search | target={stash_name} | "
         f"confidence={confidence:.2f} | threshold={STASH_TAB_MATCH_THRESHOLD:.2f} | "
-        f"center={center}"
+        f"center={center} | template={template_path}"
     )
 
     if not found or center is None:
@@ -2912,13 +2968,10 @@ def load_backpack_to_storage_template(context):
 
 def run_stash_stack_pass(template, context):
     """
-    Press stash all on each configured stash tab in order, so backpack items
-    that match a stack already stored on that tab are merged into it.
+    Press stash all on each configured stash tab in order (1 -> 2 -> 3), so every
+    backpack item first stacks onto a matching item on an earlier tab before it
+    takes a new slot.
     """
-    if not STACK_STASH_AFTER_TRANSFER:
-        write_log(f"Stash stack pass disabled by GUI/config; skipping | context={context}")
-        return False
-
     pages = get_stash_stack_pages()
 
     if not pages:
@@ -2994,6 +3047,9 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
     if template is None:
         return False
 
+    if STACK_STASH_AFTER_TRANSFER:
+        return run_stash_stack_pass(template, context)
+
     screenshot = capture_window(GAME_HWND)
 
     if screenshot is None:
@@ -3001,18 +3057,14 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
         return False
 
     screenshot = ensure_storage_stash_has_space(GAME_HWND, screenshot)
-    transfer_ok = False
 
     if screenshot is None:
         write_log(
             f"Storage transfer skipped: no available stash page confirmed | context={context}"
         )
-    else:
-        transfer_ok = click_backpack_to_storage_button(screenshot, template, context)
+        return False
 
-    # Runs even when every page looked full: full pages can still take items that stack.
-    run_stash_stack_pass(template, context)
-    return transfer_ok
+    return click_backpack_to_storage_button(screenshot, template, context)
 
 
 def click_backpack_to_storage_button(screenshot, template, context):
@@ -3228,28 +3280,7 @@ def click_blue_chest_once(hwnd, detections):
         f"confidence={best_blue['confidence']:.2f}"
     )
 
-    focus_window(hwnd, warning_message="Window focus warning", wait_seconds=0.2)
-
-    if not safe_pyautogui_move_to(
-        screen_x,
-        screen_y,
-        label="blue_chest",
-        duration=0.15,
-    ):
-        return False
-
-    if not safe_pyautogui_click(screen_x, screen_y, label="blue_chest_1"):
-        return False
-    time.sleep(0.35)
-
-    if not safe_pyautogui_click(screen_x, screen_y, label="blue_chest_2"):
-        return False
-    time.sleep(0.2)
-
-    if not safe_pyautogui_click(screen_x, screen_y, label="blue_chest_3"):
-        return False
-
-    return True
+    return open_queued_chests(hwnd, local_x, local_y, "blue")
 
 def print_bot_status_on_change(bot_info):
     """
@@ -3554,13 +3585,14 @@ def resolve_legacy_map_scroll_focus(hwnd, reason, label="scroll"):
     }
 
 
-def click_window_point(hwnd, local_x, local_y, label="", coordinate_space="screenshot"):
+def click_window_point(hwnd, local_x, local_y, label="", coordinate_space="screenshot", button="left"):
     return input_controller.click_window_point(
         hwnd,
         local_x,
         local_y,
         label=label,
         coordinate_space=coordinate_space,
+        button=button,
     )
     
 def scroll_map(hwnd, direction, repeat=None, route=None):
