@@ -4,13 +4,26 @@ MAA TaskBar Hero is a visual automation tool designed for the Steam game **TaskB
 
 It uses screenshot analysis and template matching to interpret the game screen, automatically select farming routes, detect boss alerts, identify treasure chest drops, manage storage/stash transfers, and run the farming process in a continuous loop.
 
-This version is English-only: the application GUI is in English, and the visual templates are captured from the English game UI.
-
 Concept and direction by **Marcus-Xu-04**. Built with Codex as a coding assistant. Shared for learning, experimentation, and automation research.
 
 ---
 
-## Project Status
+## Extended Version
+
+This repository is [chanonwa](https://github.com/chanonwa)'s version of MAA TaskBar Hero, built on and extended from Marcus-Xu-04's original version at [Marcus-Xu-04/MAA-Task-Bar-Hero](https://github.com/Marcus-Xu-04/MAA-Task-Bar-Hero). It is maintained separately, and changes made here are not sent back to the original project.
+
+What this version adds on top of the original:
+
+* **English-only.** The application GUI is in English, and the visual templates are captured from the English game UI. The Chinese GUI and templates have been removed.
+* **Stash stacking after drops.** After a chest is opened and the backpack is stashed, the bot visits stash tabs 1-3 and presses Stash All on each, so leftover items merge into existing stacks. Toggle it with the GUI checkbox or `stack_stash_after_transfer`; choose the tabs with `stash_stack_pages`.
+* **Fixed recognition mode.** The recognition mode dropdown is removed and the bot always uses the balanced profile.
+* **GUI fixes.** All six route buttons stay visible, and the navigation-failure warning popup works again.
+
+---
+
+## Original Project Status
+
+From the original author:
 
 **v1.3.0 is likely the final major release of MAA TaskBar Hero.**
 
