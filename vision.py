@@ -477,44 +477,50 @@ def match_template(search_img, template):
     }
 
 
-def detect_chests_in_region(region_img, blue_template=None, brown_template=None, threshold=0.80):
+def detect_chests_in_region(
+    region_img,
+    blue_template=None,
+    brown_template=None,
+    threshold=0.80,
+    act_boss_template=None,
+):
     """
-    Detect blue/brown chests inside one cropped battle region.
-    Allows either template to be missing.
+    Detect blue/brown/act-boss chest bubbles inside one cropped battle region.
+    Allows any template to be missing.
     """
     detections = []
 
-    if blue_template is not None:
-        blue = match_template(region_img, blue_template)
+    for chest_type, template in (
+        ("blue", blue_template),
+        ("brown", brown_template),
+        ("act_boss", act_boss_template),
+    ):
+        if template is None:
+            continue
 
-        if blue["confidence"] >= threshold:
+        match = match_template(region_img, template)
+
+        if match["confidence"] >= threshold:
             detections.append({
-                "type": "blue",
-                **blue,
+                "type": chest_type,
+                **match,
             })
 
-    if brown_template is not None:
-        brown = match_template(region_img, brown_template)
+    # Chest bubbles share the same chest art, so one bubble can match several
+    # templates. Matches on the same spot are one bubble: keep the strongest type.
+    kept = []
 
-        if brown["confidence"] >= threshold:
-            detections.append({
-                "type": "brown",
-                **brown,
-            })
+    for det in sorted(detections, key=lambda det: det["confidence"], reverse=True):
+        width, height = det["size"]
 
-    # Blue and brown chest bubbles share the same chest art, so one bubble can match
-    # both templates. Matches on the same spot are one bubble: keep the stronger type.
-    if len(detections) == 2:
-        first, second = detections
-        width, height = first["size"]
-
-        if (
-            abs(first["center"][0] - second["center"][0]) < width // 2
-            and abs(first["center"][1] - second["center"][1]) < height // 2
+        if all(
+            abs(det["center"][0] - other["center"][0]) >= width // 2
+            or abs(det["center"][1] - other["center"][1]) >= height // 2
+            for other in kept
         ):
-            detections = [max(detections, key=lambda det: det["confidence"])]
+            kept.append(det)
 
-    return detections
+    return kept
 
 def detect_boss_warning_pixels(region_img, min_red_pixels=3000):
     """
@@ -742,9 +748,9 @@ def log_expanded_roi_retry_result(label, found, confidence, threshold):
     )
 
 
-def detect_all_chests(img, blue_template, brown_template):
+def detect_all_chests(img, blue_template, brown_template, act_boss_template=None):
     """
-    Search battle_top and battle_bottom for blue/brown chest templates.
+    Search battle_top and battle_bottom for blue/brown/act-boss chest templates.
 
     Returns detections in full-window coordinates.
     """
@@ -765,6 +771,7 @@ def detect_all_chests(img, blue_template, brown_template):
             blue_template,
             brown_template,
             threshold=_VISUAL_MATCH_THRESHOLD,
+            act_boss_template=act_boss_template,
         )
 
         for det in detections:
@@ -2151,8 +2158,9 @@ def collect_detection_snapshot(
     brown_template,
     boss_warning_template,
     clear_template,
+    act_boss_template=None,
 ):
-    detections = detect_all_chests(img, blue_template, brown_template)
+    detections = detect_all_chests(img, blue_template, brown_template, act_boss_template)
     boss_visible, boss_region, boss_pixels, boss_confidence = detect_boss_warning(
         img,
         boss_warning_template,

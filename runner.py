@@ -442,6 +442,7 @@ PREVIEW_REGION_NAMES = {
 DETECTION_COLORS = {
     "blue": (255, 120, 0),      # blue-ish in BGR
     "brown": (0, 180, 255),     # orange/brown-ish in BGR
+    "act_boss": (0, 0, 255),    # red in BGR
 }
 
 
@@ -561,13 +562,34 @@ STASH_TAB_SELECTED_TEMPLATES = get_config().get("stash_tab_selected_templates", 
     "stash_1": "templates/general/stash_1_selected.png",
     "stash_2": "templates/general/stash_2_selected.png",
     "stash_3": "templates/general/stash_3_selected.png",
+    "stash_4": "templates/general/stash_4_selected.png",
 })
 STACK_STASH_AFTER_TRANSFER = env_flag(
     "MAATBH_STACK_STASH_AFTER_TRANSFER",
     config_bool("stack_stash_after_transfer", True),
 )
-STASH_STACK_PAGES = get_config().get("stash_stack_pages", ["stash_1", "stash_2", "stash_3"])
+STASH_STACK_PAGES = get_config().get("stash_stack_pages", ["stash_1", "stash_2", "stash_3", "stash_4"])
 BACKPACK_TO_STORAGE_TEMPLATE_PATH = "templates/general/backpack_to_storage_button.png"
+ACT_BOSS_CHEST_TEMPLATE = "templates/general/chest_act_boss.png"
+# Soulstones summon act bosses: after a blue chest the bot fights the hardest
+# unlocked "-10" stage for every difficulty it holds soulstones for.
+USE_SOULSTONES_FOR_ACT_BOSSES = env_flag(
+    "MAATBH_USE_SOULSTONES",
+    config_bool("use_soulstones_for_act_bosses", False),
+)
+SOULSTONE_ICON_TEMPLATE = get_config().get("soulstone_icon_template", "templates/general/soulstone.png")
+# The icon is the same for every difficulty; the hover tooltip title tells them apart.
+SOULSTONE_TITLE_TEMPLATES = get_config().get("soulstone_title_templates", {
+    "torment": "templates/general/soulstone_title_torment.png",
+})
+SOULSTONE_MATCH_THRESHOLD = config_non_negative_float("soulstone_match_threshold", 0.85)
+SOULSTONE_TOOLTIP_WAIT_SECONDS = config_non_negative_float("soulstone_tooltip_wait_seconds", 1.5)
+SOULSTONE_SCAN_MAX_AGE_SECONDS = 60
+ACT_BOSS_FIGHT_TIMEOUT_SECONDS = config_non_negative_float("act_boss_fight_timeout_seconds", 300.0)
+ACT_BOSS_CHEST_WAIT_SECONDS = config_non_negative_float("act_boss_chest_wait_seconds", 10.0)
+ACT_BOSS_MAX_ATTEMPTS = config_positive_int("act_boss_max_attempts", 1)
+ACT_BOSS_DIFFICULTY_ORDER = ("torment", "hell", "nightmare", "normal")
+ACT_BOSS_ACT_ORDER = (3, 2, 1)
 STORAGE_STASH_SEARCH_REGION =get_config().get("storage_stash_search_region", "hero_panel")
 STASH_LAST_SLOT_ANCHOR_OFFSET_X = config_int("stash_last_slot_anchor_offset_x", -9)
 STASH_LAST_SLOT_ANCHOR_OFFSET_Y = config_int("stash_last_slot_anchor_offset_y", -55)
@@ -611,6 +633,8 @@ mouse_y = 0
 last_blue_alert_time = 0
 last_brown_log_time = 0
 last_non_blue_box_click_time = 0
+soulstone_difficulties = set()
+soulstone_scan_time = 0.0
 last_seen_chest_time = 0
 last_state = "none"
 current_route_index = 0
@@ -1366,6 +1390,10 @@ def log_recognition_profile_startup():
         f"repeat_same_level_after_blue_chest={REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST} | "
         f"open_all_boxes_on_same_level={OPEN_ALL_BOXES_ON_SAME_LEVEL} | "
         f"has_rune_of_opening={HAS_RUNE_OF_OPENING} | "
+        f"use_soulstones_for_act_bosses={USE_SOULSTONES_FOR_ACT_BOSSES} | "
+        f"soulstone_title_difficulties={sorted(SOULSTONE_TITLE_TEMPLATES) if isinstance(SOULSTONE_TITLE_TEMPLATES, dict) else 'invalid'} | "
+        f"act_boss_fight_timeout={ACT_BOSS_FIGHT_TIMEOUT_SECONDS:.0f}s | "
+        f"act_boss_max_attempts={ACT_BOSS_MAX_ATTEMPTS} | "
         f"non_blue_box_click_cooldown={NON_BLUE_BOX_CLICK_COOLDOWN_SECONDS:.2f}s | "
         f"recover_orphan_blue_chest_before_boss={RECOVER_ORPHAN_BLUE_CHEST_BEFORE_BOSS} | "
         f"orphan_blue_chest_confirm_cycles={ORPHAN_BLUE_CHEST_CONFIRM_CYCLES} | "
@@ -1408,6 +1436,12 @@ def get_startup_template_specs():
 
     add_template_spec(specs, seen_paths, "general:blue_chest", "templates/general/chest_blue.png")
     add_template_spec(specs, seen_paths, "general:brown_chest", "templates/general/chest_brown.png")
+    add_template_spec(specs, seen_paths, "general:act_boss_chest", ACT_BOSS_CHEST_TEMPLATE)
+    add_template_spec(specs, seen_paths, "general:soulstone", SOULSTONE_ICON_TEMPLATE)
+
+    if isinstance(SOULSTONE_TITLE_TEMPLATES, dict):
+        for difficulty, path in SOULSTONE_TITLE_TEMPLATES.items():
+            add_template_spec(specs, seen_paths, f"general:soulstone_title_{difficulty}", path)
     add_template_spec(specs, seen_paths, "general:boss_warning_text", "templates/general/boss_warning_text.png")
     add_template_spec(specs, seen_paths, "general:task_clear", CLEAR_TEMPLATE_PATH)
     add_template_spec(specs, seen_paths, "general:level_dot_white", LEVEL_DOT_WHITE_TEMPLATE)
@@ -2054,6 +2088,7 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
         state_memory.blue_drop_handled_this_route = True
         write_log("Blue chest click completed.")
         try_move_backpack_to_storage_after_blue_chest()
+        run_act_boss_attempts_if_enabled()
     else:
         state_memory.blue_drop_handled_this_route = True
         write_log("DRY RUN: would click blue chest once.")
@@ -2966,13 +3001,16 @@ def load_backpack_to_storage_template(context):
     return template
 
 
-def run_stash_stack_pass(template, context):
+def run_stash_stack_pass(template, context, press_stash_all=True):
     """
-    Press stash all on each configured stash tab in order (1 -> 2 -> 3), so every
+    Press stash all on each configured stash tab in order (1 -> 2 -> 3 -> 4), so every
     backpack item first stacks onto a matching item on an earlier tab before it
-    takes a new slot.
+    takes a new slot. Around blue chests and act boss fights it also notes which
+    soulstone difficulties each tab holds.
     """
     pages = get_stash_stack_pages()
+    scan_soulstones = USE_SOULSTONES_FOR_ACT_BOSSES and context.startswith(("blue_chest", "act_boss"))
+    found_soulstones = set()
 
     if not pages:
         write_log(
@@ -3026,14 +3064,329 @@ def run_stash_stack_pass(template, context):
             )
             break
 
-        if click_backpack_to_storage_button(screenshot, template, f"{context}:stack_{stash_name}"):
+        if press_stash_all and click_backpack_to_storage_button(
+            screenshot,
+            template,
+            f"{context}:stack_{stash_name}",
+        ):
             stacked_pages.append(stash_name)
+
+        if scan_soulstones:
+            found_soulstones |= scan_open_stash_tab_for_soulstones(stash_name, context)
 
     write_log(
         f"Stash stack pass finished | context={context} | "
         f"stacked={stacked_pages} | requested={pages}"
     )
+
+    if scan_soulstones:
+        record_soulstone_scan(found_soulstones, context)
+
     return len(stacked_pages) == len(pages)
+
+
+def find_soulstone_slots(screenshot):
+    """
+    Return the screenshot centers of soulstone icons on the open stash tab, using
+    the same 7x7 grid geometry as the stash space check (anchored on the sort button).
+    """
+    template = load_template(SOULSTONE_ICON_TEMPLATE)
+    sort_button = find_stash_sort_button(screenshot)
+
+    if template is None or not sort_button.get("found") or sort_button.get("center") is None:
+        return []
+
+    first_x = sort_button["center"][0] + STORAGE_GRID_ANCHOR_OFFSET_X
+    first_y = sort_button["center"][1] + STORAGE_GRID_ANCHOR_OFFSET_Y
+    pitch_x = STORAGE_GRID_SLOT_WIDTH + STORAGE_GRID_SLOT_GAP_X
+    pitch_y = STORAGE_GRID_SLOT_HEIGHT + STORAGE_GRID_SLOT_GAP_Y
+    half = max(STORAGE_GRID_SLOT_WIDTH, STORAGE_GRID_SLOT_HEIGHT) // 2 + 2
+    slots = []
+
+    for row in range(STORAGE_GRID_ROWS):
+        for col in range(STORAGE_GRID_COLS):
+            center_x = first_x + col * pitch_x
+            center_y = first_y + row * pitch_y
+            slot_img = crop(
+                screenshot,
+                (center_x - half, center_y - half, center_x + half, center_y + half),
+            )
+
+            if slot_img is None:
+                continue
+
+            if match_template(slot_img, template)["confidence"] >= SOULSTONE_MATCH_THRESHOLD:
+                slots.append((center_x, center_y))
+
+    return slots
+
+
+def read_soulstone_difficulty(slot_center, context):
+    """
+    Hover a soulstone and read its difficulty from the tooltip title
+    ("Soulstone - Torment"). Unknown titles are saved to the debug folder so a
+    template for that difficulty can be added.
+    """
+    _client_x, _client_y, screen_x, screen_y, _scaling = screenshot_local_to_click_coordinates(
+        GAME_HWND,
+        slot_center[0],
+        slot_center[1],
+        label="soulstone_hover",
+    )
+
+    if not input_controller.hover_screen_point(screen_x, screen_y, label="soulstone_hover"):
+        return None
+
+    title_templates = {}
+
+    for difficulty, path in (SOULSTONE_TITLE_TEMPLATES if isinstance(SOULSTONE_TITLE_TEMPLATES, dict) else {}).items():
+        try:
+            template = load_template(path)
+        except FileNotFoundError:
+            continue
+
+        if template is not None:
+            title_templates[difficulty] = template
+
+    started = time.time()
+    screenshot = None
+    best_difficulty, best_confidence = None, 0.0
+
+    # The tooltip takes a moment to open, so keep looking until it does.
+    while time.time() - started < SOULSTONE_TOOLTIP_WAIT_SECONDS:
+        time.sleep(0.2)
+
+        try:
+            screenshot = capture_window(GAME_HWND)
+        except Exception as e:
+            write_log(f"Soulstone tooltip screenshot failed | context={context} | error={e}")
+            return None
+
+        if screenshot is None:
+            continue
+
+        for difficulty, template in title_templates.items():
+            confidence = match_template(screenshot, template)["confidence"]
+
+            if confidence > best_confidence:
+                best_difficulty, best_confidence = difficulty, confidence
+
+        if best_confidence >= SOULSTONE_MATCH_THRESHOLD:
+            return best_difficulty
+
+    if screenshot is None:
+        return None
+
+    unknown_path = os.path.join(get_debug_dir(), "soulstone_unknown_tooltip.png")
+    cv2.imwrite(unknown_path, screenshot)
+    write_log(
+        f"Soulstone difficulty not recognized | slot={slot_center} | "
+        f"best={best_difficulty}:{best_confidence:.2f} | saved={unknown_path}"
+    )
+    return None
+
+
+def scan_open_stash_tab_for_soulstones(stash_name, context):
+    try:
+        screenshot = capture_window(GAME_HWND)
+    except Exception as e:
+        write_log(f"Soulstone scan skipped tab: screenshot failed | stash={stash_name} | error={e}")
+        return set()
+
+    if screenshot is None:
+        return set()
+
+    difficulties = set()
+
+    for slot_center in find_soulstone_slots(screenshot):
+        difficulty = read_soulstone_difficulty(slot_center, context)
+        write_log(
+            f"Soulstone found | stash={stash_name} | slot={slot_center} | "
+            f"difficulty={difficulty or 'unknown'} | context={context}"
+        )
+
+        if difficulty:
+            difficulties.add(difficulty)
+
+    return difficulties
+
+
+def record_soulstone_scan(difficulties, context):
+    global soulstone_difficulties
+    global soulstone_scan_time
+
+    soulstone_difficulties = set(difficulties)
+    soulstone_scan_time = time.time()
+    write_log(
+        f"Soulstone scan | context={context} | "
+        f"difficulties={sorted(soulstone_difficulties) or 'none'}"
+    )
+
+
+def scan_stash_tabs_for_soulstones(context):
+    """Visit the stash tabs only to look for soulstones (no Stash All)."""
+    run_stash_stack_pass(None, context, press_stash_all=False)
+
+
+def get_act_boss_route(difficulty, act):
+    target = (difficulty, f"chapter_{act}", f"{act}-10")
+
+    for route in AVAILABLE_LEVELS:
+        if (route["difficulty"], route["chapter"], route["level"]) == target:
+            boss_route = route.copy()
+            boss_route["name"] = f"Act boss {difficulty} {act}-10"
+            return boss_route
+
+    return None
+
+
+def find_act_boss_chest(screenshot):
+    try:
+        template = load_template(ACT_BOSS_CHEST_TEMPLATE)
+    except FileNotFoundError:
+        return None
+
+    detections = detect_all_chests(screenshot, None, None, template)
+    return max(detections, key=lambda det: det["confidence"]) if detections else None
+
+
+def wait_for_act_boss_result(route):
+    """
+    Win: the red Act Boss Treasure Chest bubble appears (it comes with CLEAR).
+    Loss: a CLEAR without that bubble (after a loss the game is already back on
+    the previous stage), or no result before the timeout.
+    """
+    clear_template = load_template(CLEAR_TEMPLATE_PATH)
+    started = time.time()
+    clear_seen_at = None
+
+    while time.time() - started < ACT_BOSS_FIGHT_TIMEOUT_SECONDS:
+        try:
+            screenshot = capture_window(GAME_HWND)
+        except Exception as e:
+            write_log(f"Act boss watch screenshot failed | error={e}")
+            time.sleep(1.0)
+            continue
+
+        if screenshot is None:
+            time.sleep(1.0)
+            continue
+
+        if find_act_boss_chest(screenshot) is not None:
+            write_log(
+                f"Act boss defeated | target={route_target_label(route)} | "
+                f"seconds={time.time() - started:.0f}"
+            )
+            return "win"
+
+        clear_visible, _clear_confidence, _match_info = detect_clear_screen(screenshot, clear_template)
+
+        if clear_visible and clear_seen_at is None:
+            clear_seen_at = time.time()
+
+        if clear_seen_at is not None and time.time() - clear_seen_at > ACT_BOSS_CHEST_WAIT_SECONDS:
+            write_log(
+                f"Act boss lost: CLEAR without the act boss chest | "
+                f"target={route_target_label(route)} | seconds={time.time() - started:.0f}"
+            )
+            return "loss"
+
+        time.sleep(0.5)
+
+    write_log(
+        f"Act boss result timeout; treating as a loss | "
+        f"target={route_target_label(route)} | timeout={ACT_BOSS_FIGHT_TIMEOUT_SECONDS:.0f}s"
+    )
+    return "loss"
+
+
+def attempt_act_boss(route):
+    write_log(f"Act boss attempt | target={route_target_label(route)}")
+
+    if not select_difficulty_and_chapter(GAME_HWND, route):
+        return "unavailable"
+
+    # A locked "-10" stage shows a padlock and no label, so the search fails.
+    if not find_and_click_level_by_template(GAME_HWND, route):
+        write_log(f"Act boss stage unavailable (locked or not found) | target={route_target_label(route)}")
+        return "unavailable"
+
+    return wait_for_act_boss_result(route)
+
+
+def collect_after_act_boss(outcome):
+    """Open the act boss chest after a win, then stash and re-check soulstones."""
+    if outcome == "win":
+        try:
+            screenshot = capture_window(GAME_HWND)
+        except Exception:
+            screenshot = None
+
+        chest = find_act_boss_chest(screenshot) if screenshot is not None else None
+
+        if chest is not None:
+            open_queued_chests(GAME_HWND, *chest["center_full"], "act_boss")
+
+    scan_before = soulstone_scan_time
+
+    if blue_chest_storage_enabled():
+        run_backpack_to_storage_transfer(context="act_boss")
+
+    if soulstone_scan_time == scan_before:
+        scan_stash_tabs_for_soulstones("act_boss_scan")
+
+
+def run_act_boss_attempts_if_enabled():
+    """
+    Spend soulstones on act bosses: hardest difficulty first, and within it the
+    hardest unlocked act (3 -> 2 -> 1). A win re-enters the same "-10" stage
+    while that difficulty still has soulstones; a loss drops to the next lower act.
+    After every fight the game returns to the stage it left by itself.
+    """
+    if not USE_SOULSTONES_FOR_ACT_BOSSES:
+        return
+
+    if time.time() - soulstone_scan_time > SOULSTONE_SCAN_MAX_AGE_SECONDS:
+        scan_stash_tabs_for_soulstones("act_boss_scan")
+
+    difficulties = [d for d in ACT_BOSS_DIFFICULTY_ORDER if d in soulstone_difficulties]
+
+    if not difficulties:
+        write_log("Act boss: no soulstones found; continuing the farm route.")
+        return
+
+    write_log(f"Act boss run started | soulstone_difficulties={difficulties}")
+    attempts = 0
+    results = []
+
+    for difficulty in difficulties:
+        for act in ACT_BOSS_ACT_ORDER:
+            route = get_act_boss_route(difficulty, act)
+
+            while (
+                route is not None
+                and attempts < ACT_BOSS_MAX_ATTEMPTS
+                and difficulty in soulstone_difficulties
+            ):
+                outcome = attempt_act_boss(route)
+
+                if outcome == "unavailable":
+                    break
+
+                attempts += 1
+                results.append(f"{difficulty} {act}-10 {outcome}")
+                collect_after_act_boss(outcome)
+
+                if outcome == "loss":
+                    break
+
+    if attempts >= ACT_BOSS_MAX_ATTEMPTS:
+        write_log(f"Act boss run stopped at the attempt limit | limit={ACT_BOSS_MAX_ATTEMPTS}")
+
+    write_log(
+        f"Act boss run finished | attempts={attempts} | results={results or 'none'} | "
+        f"soulstones_left={sorted(soulstone_difficulties) or 'none'}"
+    )
 
 
 def run_backpack_to_storage_transfer(context="blue_chest"):
@@ -3116,13 +3469,15 @@ def click_backpack_to_storage_button(screenshot, template, context):
     return True
 
 
-def try_move_backpack_to_storage_after_blue_chest():
-    move_to_storage_enabled = env_flag(
+def blue_chest_storage_enabled():
+    return env_flag(
         "MAATBH_MOVE_TO_STORAGE",
         config_bool("move_backpack_to_storage_after_blue_chest", False)
     )
 
-    if not move_to_storage_enabled:
+
+def try_move_backpack_to_storage_after_blue_chest():
+    if not blue_chest_storage_enabled():
         write_log("Storage transfer disabled by GUI/config; skipping.")
         return False
 
@@ -6735,6 +7090,7 @@ def main():
     brown_template = load_template("templates/general/chest_brown.png")
     boss_warning_template = load_template("templates/general/boss_warning_text.png")
     clear_template = load_template(CLEAR_TEMPLATE_PATH)
+    act_boss_chest_template = load_template(ACT_BOSS_CHEST_TEMPLATE)
     safe_print("Templates loaded.")
     write_log(f"CLEAR template loaded | path={CLEAR_TEMPLATE_PATH}")
     safe_print()
@@ -6808,6 +7164,7 @@ def main():
             brown_template,
             boss_warning_template,
             clear_template,
+            act_boss_chest_template,
         )
         detections = visual_snapshot.detections
         boss_visible = visual_snapshot.boss_visible

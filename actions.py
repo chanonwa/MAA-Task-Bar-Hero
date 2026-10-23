@@ -413,6 +413,30 @@ class InputController:
             )
             return False
 
+    def hover_screen_point(self, screen_x, screen_y, label="hover"):
+        """
+        Put the cursor on a point using real mouse-move input events. The game
+        ignores a bare SetCursorPos for hovering, so tooltips would never open.
+        """
+        if self.is_screen_point_fail_safe_risky(screen_x, screen_y):
+            self.write_log(
+                f"Mouse hover failed safely | label={label} | "
+                f"reason=fail_safe_risky_point | screen=({screen_x}, {screen_y})"
+            )
+            return False
+
+        try:
+            win32api.SetCursorPos((int(screen_x) - 3, int(screen_y)))
+
+            for _ in range(3):
+                win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 1, 0, 0, 0)
+                time.sleep(0.03)
+
+            return True
+        except Exception as e:
+            self.write_log(f"Mouse hover failed safely | label={label} | reason={e}")
+            return False
+
     def safe_pyautogui_click(self, screen_x, screen_y, label="mouse_click", button="left"):
         if self.is_screen_point_fail_safe_risky(screen_x, screen_y):
             self.write_log(
