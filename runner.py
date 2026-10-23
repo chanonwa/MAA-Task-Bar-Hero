@@ -70,11 +70,13 @@ import win32gui
 import json
 import os
 import sys
+import threading
 import traceback
 import ctypes
 import win32con
 import win32api
 from actions import InputController
+from instance_lock import BOT_LOCK_NAME, acquire_instance_lock
 from logger import safe_print, sanitize_text_for_output, timestamp
 from state import (
     BotRuntimeState,
@@ -97,9 +99,12 @@ from state import (
 from config import (
     APP_VERSION,
     CONFIG_FILE_NAME,
+    EMERGENCY_HOTKEY_MODIFIERS,
+    EMERGENCY_STOP_EXIT_CODE,
     emit_config_load_messages,
     get_base_dir,
     get_config,
+    get_emergency_hotkey,
     get_effective_thresholds,
     get_recognition_mode,
     get_threshold,
@@ -7135,7 +7140,49 @@ def main():
         cv2.destroyAllWindows()
 
 
+EMERGENCY_KEY_POLL_SECONDS = 0.05
+
+
+def start_emergency_key_watch():
+    """
+    Stop the bot as soon as the emergency stop hotkey is held, by watching the
+    keyboard from the bot process itself. The GUI's hotkey only reaches the
+    window that registered it, so this also works when another program or a
+    second MAA window owns Ctrl + Shift + F12.
+    """
+    if not config_bool("emergency_hotkey_enabled", True):
+        return
+
+    names, key_vk, display = get_emergency_hotkey()
+
+    if key_vk is None:
+        write_log(f"Emergency key watch not started: unsupported key in {display}")
+        return
+
+    key_groups = [EMERGENCY_HOTKEY_MODIFIERS[name][1] for name in names] + [(key_vk,)]
+
+    def watch():
+        while True:
+            if all(
+                any(win32api.GetAsyncKeyState(code) & 0x8000 for code in group)
+                for group in key_groups
+            ):
+                write_log(f"EMERGENCY STOP: {display} pressed; the bot stops now.")
+                os._exit(EMERGENCY_STOP_EXIT_CODE)
+
+            time.sleep(EMERGENCY_KEY_POLL_SECONDS)
+
+    threading.Thread(target=watch, name="MAA-TBH-emergency-key-watch", daemon=True).start()
+    write_log(f"Emergency key watch started | hotkey={display}")
+
+
 def run_main_with_fatal_logging():
+    if not acquire_instance_lock(BOT_LOCK_NAME):
+        write_log("Another bot is already running; this copy exits without touching the game.")
+        sys.exit(1)
+
+    start_emergency_key_watch()
+
     try:
         main()
     except Exception:

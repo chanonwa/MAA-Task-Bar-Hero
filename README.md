@@ -1,171 +1,49 @@
 # MAA TaskBar Hero
 
-MAA TaskBar Hero is a visual automation tool designed for the Steam game **TaskBarHero**.
+A visual automation tool for the Steam game **TaskBarHero**. It reads the game screen with screenshots and template matching, then plays your farming route with normal mouse and keyboard input. It runs the route, opens chest drops, stashes loot, and fights act bosses with your soulstones.
 
-It uses screenshot analysis and template matching to interpret the game screen, automatically select farming routes, detect boss alerts, identify treasure chest drops, manage storage/stash transfers, and run the farming process in a continuous loop.
+This is [chanonwa](https://github.com/chanonwa)'s extended version of [Marcus-Xu-04/MAA-Task-Bar-Hero](https://github.com/Marcus-Xu-04/MAA-Task-Bar-Hero), the original project by Marcus-Xu-04. It is maintained separately: changes here are not sent to the original, and updates from it are not pulled in.
 
-Concept and direction by **Marcus-Xu-04**. Built with Codex as a coding assistant. Shared for learning, experimentation, and automation research.
+## What's new
 
----
+Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases)**; the latest is [1.4](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases/tag/v1.4).
 
-## Extended Version
+## Download and run
 
-This repository is [chanonwa](https://github.com/chanonwa)'s version of MAA TaskBar Hero, built on and extended from Marcus-Xu-04's original version at [Marcus-Xu-04/MAA-Task-Bar-Hero](https://github.com/Marcus-Xu-04/MAA-Task-Bar-Hero). It is maintained as a separate repository: changes made here are not sent back to the original project, and updates from the original are not pulled in.
+**Windows app:** download the zip from the latest release, extract all of it, and run `MAA Task Bar Hero.exe` inside the extracted folder.
 
-What this version adds on top of the original:
+**From source:**
 
-* **English-only.** The application GUI is in English, and the visual templates are captured from the English game UI. The Chinese GUI and templates have been removed.
-* **Stash stacking after drops.** After chests are opened, the bot goes to stash tab 1 and presses Stash All, then tab 2, tab 3, and tab 4, so each item stacks onto a matching item on an earlier tab before it takes a new slot. Toggle it with the GUI checkbox or `stack_stash_after_transfer` (off falls back to a single Stash All on a tab with free space); choose the tabs with `stash_stack_pages`.
-* **Open all queued chests at once.** Chests wait in a bubble whose squares count the queue. The bot right-clicks a bubble to open every queued chest of that type, or presses Space to open every chest of every type if you tick *I own the Rune of Opening* (`has_rune_of_opening`).
-* **Act bosses with soulstones.** With *Boss run* ticked (`use_soulstones_for_act_bosses`), the bot checks stash tabs 1-4 for soulstones after each blue chest, hovering each one to read its difficulty from the tooltip. It then fights act bosses hardest first: Torment, Hell, Nightmare, Normal soulstones in that order, switching the PORTAL difficulty dropdown as needed, and within each difficulty the highest unlocked "-10" stage (Act 3, then 2, then 1). *Boss runs per blue chest* (`act_boss_max_attempts`, default 1) sets how many fights it does; *Use all soulstones* (`act_boss_use_all_soulstones`) keeps fighting until none are left. A win shows CLEAR plus the Act Boss Treasure Chest, which the bot opens and stashes; the next fight re-enters the same stage while soulstones of that difficulty remain, and a loss moves down one act. The game returns to the stage it left after each fight. After the boss run the PORTAL window is left showing that stage, without pressing it. The current stage is the one with the flag, the only stage drawn with a bright green highlight. The bot checks the farm route's difficulty and act first, then every other one, and logs whether you are back where you left off. Each difficulty's soulstone has its own icon. Torment and Hell are included so far: their icons in `soulstone_icon_templates`, their tooltip titles in `soulstone_title_templates`. To add Nightmare or Normal, add the soulstone's icon and title there. A matching icon with an unknown title is skipped, and its tooltip is saved to `debug/soulstone_unknown_tooltip.png`.
-* **Act read from the ribbon.** The current act is read from the big ribbon under the act tabs ("Act 3"). The ribbon's color follows the difficulty, so only its white title text is matched (`act_ribbon_match_threshold`). Act tabs are clicked at their fixed place under the difficulty dropdown and confirmed on the ribbon. The old tab-template matching is only a fallback for when the ribbon is covered. The difficulty is read from the dropdown's displayed value. Its option list always shows Normal, Nightmare, Hell, Torment in fixed rows, so the target row is clicked by position (`difficulty_dropdown_first_row_offset_y`, `difficulty_dropdown_row_spacing_px`) once the list is open.
-* **Map scrolling never presses a stage.** The map is scrolled with the mouse wheel while hovering it; the old focus click on the map is gone.
-* **Mouse rests on HERO.** After every click, scroll, and soulstone tooltip read, and before every check, the cursor rests on the HERO title of the middle panel. It gets there with real mouse-move events, so no tooltip stays open or covers what the bot reads next. Change the spot with `mouse_rest_template`.
-* **Works with the window at a screen edge.** The mouse safety check only blocks the screen corners, where PyAutoGUI's fail-safe stop fires. Before, it blocked anything within 40 px of any edge, so a window pushed to the left edge could not click stash tab 1.
-* **Faster navigation.** After switching difficulty or act, the bot re-reads the view every 0.25 s and moves on as soon as it shows the target, instead of waiting a fixed time.
-* **Templates re-captured from the current game.** The chest bubbles, stash tabs (normal and selected), Act 3 tab, act ribbons, HERO title, and the Torment difficulty header match the live English game.
-* **Fixed recognition mode.** The recognition mode dropdown is removed and the bot always uses the balanced profile.
-* **GUI fixes.** All six route buttons stay visible, the navigation-failure warning popup works again, and a single *Move backpack items to storage* checkbox covers blue and brown/other chests.
+1. Install Python 3, then run `py -3 -m pip install -r requirements.txt`.
+2. Start the GUI with `Start MAA Task Bar Hero.bat`.
+3. To build the Windows app yourself, run `Build Windows App.bat`.
 
----
+In the GUI, add stages to the farming cycle, tick the options you want, and press **Save and Start**.
 
-## Original Project Status
+## Before you start
 
-From the original author:
-
-**v1.3.0 is likely the final major release of MAA TaskBar Hero.**
-
-The game server has already been updated, and testing has shown that the core game logic this project originally relied on has changed. Because of that, the original purpose of this project no longer exists in the same way.
-
-From this point on, MAA TaskBar Hero should be treated as a normal utility/tool rather than an actively developed automation project. I do not plan to continue major feature development. Future updates, if any, will mainly be limited to bug reports, small fixes, and documentation corrections.
-
-Thank you to everyone who tested the tool, reported issues, shared logs, joined discussions, and helped improve the project. It has been a pleasure to build this with the community.
-
----
-
-## What This Project Does
-
-MAA TaskBar Hero is built around external visual automation. It observes the game screen through screenshots, recognizes UI elements with image templates, and then performs normal mouse and keyboard actions.
-
-The bot can help with:
-
-* selecting planned farming routes
-* switching difficulty, chapter, and level
-* verifying that the intended route was selected
-* detecting boss alerts
-* detecting treasure chest drops
-* prioritizing blue chest rewards
-* opening brown/other chests when configured
-* transferring backpack items to storage/stash
-* checking storage/stash space using visual recognition
-* optionally repeating the same level after blue chest rewards
-* looping the farming process
-* exporting debug information when something fails
-
-The bot does **not** read game memory, modify game files, intercept network traffic, or inject code into the game. It works only through visual recognition and normal input automation.
-
----
-
-## Important Setup Requirement
-
-Please keep the game at **1x / 100% zoom**.
-
-Game/browser zoom levels such as 1.25x, 1.5x, and 2x are not currently supported. These zoom modes change the actual rendered game UI pixels and may cause visual template recognition to fail.
-
-Multi-monitor setups, negative-coordinate monitor layouts, and high-resolution displays have been improved, but the game UI itself should remain at 1x / 100%.
-
----
-
-## Language and Template Support
-
-The application GUI is in English, and the templates in `templates/` are captured from the **English** game UI, so set the game language to English.
-
-MAA TaskBar Hero relies on screenshot templates for difficulty buttons, chapter tabs, level labels, boss warnings, chest drops, storage/backpack buttons, stash tabs, and other UI elements. If the game UI uses a different language, the templates inside the `templates/` folder need to be replaced.
-
-In short:
-
-* Application GUI language: English.
-* Game UI recognition: English game UI, through the templates in `templates/`.
-* Game zoom: must stay at 1x / 100%.
-
----
-
-## v1.3.0 Highlights
-
-### Chest Handling
-
-* Improved blue chest handling and recovery logic.
-* Added near-threshold blue chest recovery.
-* Fixed a priority deadlock where a low-confidence blue chest could block brown/other chests.
-* Added support for opening brown/other chests while staying on the same level.
-* Added optional storage transfer after opening brown/other chests.
-
-### Storage / Stash Handling
-
-* Added automatic storage/stash page space checking.
-* Added sorting-button-based storage anchoring.
-* Added 7×7 storage grid scanning.
-* Improved blank-slot detection with visual classification.
-* Added safer storage page switching when the current page is full.
-* Added storage diagnostics to debug exports.
-
-### Route and Loop Behavior
-
-* Added an option to repeat the same level after opening a blue chest.
-* Preserved normal route advancement when repeat mode is disabled.
-* Improved runtime state cleanup after chest handling.
-
-### Debug and Stability
-
-* Improved debug ZIP exports.
-* Added current screenshots and annotated diagnostics to debug packages.
-* Added storage grid diagnostic images when storage detection fails.
-* Improved startup behavior so importing modules no longer creates runtime logs.
-* Hardened window lookup and failure handling.
-* Cleaned and reorganized core runtime code.
-
----
+* Set the game language to **English** and the game zoom to **1x / 100%**.
+* Keep the STASH, HERO, and PORTAL windows open.
+* The bot uses your real mouse, so don't use the mouse while it runs. Press **Ctrl + Shift + F12** to stop it.
 
 ## Troubleshooting
 
-**The app can't find the game window.** Make sure TaskBarHero is running and its window title contains `TaskBarHero`. Don't minimize the game window.
+**The app can't find the game window.** Make sure TaskBarHero is running and not minimized.
 
-**The bot doesn't click the game.** Turn off *Background input mode*. The game doesn't always accept background input, and the default foreground mouse mode is more reliable.
+**"MAA Task Bar Hero is already open."** Only one copy can run at a time, so two copies can't fight over the game. Use the window that's already open; the message brings it to the front.
 
-**The bot can't find a level.** Common causes: the game window size changed a lot, the map isn't open, the level's template screenshot is inaccurate, or the level image is missing from `templates/levels/`.
+**The bot doesn't click the game.** Turn off *Background input mode*. Foreground mouse mode is more reliable.
 
-**A level shows as `[Unavailable]`.** It's missing a required template or isn't fully supported yet. Add the template screenshot to enable it.
+**The bot can't find a stage.** Check the zoom is 1x and the PORTAL window is open. A stage marked `[Unavailable]` is missing its template in `templates/levels/`.
 
-**Adding a new level.** Add `templates/levels/level_<chapter>_<level>.png`. A new difficulty also needs `templates/difficulty/anchor_difficulty_<name>.png` (the dropdown showing that difficulty) and its row in `DIFFICULTY_DROPDOWN_ORDER`. Then add the route to `route_config.py`.
+**Adding templates.** A stage needs `templates/levels/level_<act>_<stage>.png`. A difficulty needs `templates/difficulty/anchor_difficulty_<name>.png`. A soulstone difficulty needs its icon in `soulstone_icon_templates` and its tooltip title in `soulstone_title_templates` (`config.json`).
 
----
+**Reporting a problem.** Use **Export Debug ZIP** in the GUI and include the zip. It holds the logs and screenshots that show what the bot saw.
 
-## Safety and Debugging
+## Disclaimer
 
-MAA TaskBar Hero includes route verification checks before continuing automation. If the selected difficulty, chapter, or level cannot be verified, the bot should fail safely instead of continuing on the wrong route.
+The bot doesn't read game memory, modify game files, inject code, or intercept network traffic. It only looks at the screen and sends normal input. It's shared for learning and automation research; use it at your own risk. Game updates or different display setups can break it.
 
-The GUI includes an **Export Debug ZIP** option. If the bot fails during navigation, recognition, chest handling, or storage/stash transfer, please include the Debug ZIP when reporting the issue. It may contain logs, screenshots, UI diagnostics, storage grid diagnostics, and navigation failure records that help identify the problem.
+## Credits
 
-Debug ZIPs are especially useful for issues involving:
-
-* chest detection
-* blue chest recovery
-* brown/other chest handling
-* route navigation
-* storage/stash transfer
-* storage space detection
-* unsupported display scaling or zoom
-
----
-
-## Project Scope and Disclaimer
-
-This project is an experimental visual automation project. It does not read game memory, modify game files, inject into game processes, or intercept network traffic. It works by analyzing screenshots and performing normal mouse/keyboard-style automation.
-
-This project is shared for learning, experimentation, and automation research. Use it at your own risk.
-
-The author does not provide support for anti-cheat bypassing, anti-detection work, software cracking, anti-cracking services, commercial resale, or paid automation services.
-
-Compatibility is not guaranteed. The tool may break after game updates, UI changes, different monitor setups, DPI scaling, window position changes, or unsupported zoom settings.
-
-Because the game server logic has already changed, this project is no longer expected to receive major feature updates. Future updates, if any, will mainly be limited to bug fixes and documentation corrections.
+Original concept and direction by **Marcus-Xu-04**. Improvements by **Chanon Wa**.

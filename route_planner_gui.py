@@ -18,7 +18,16 @@ from tkinter import scrolledtext
 from tkinter import messagebox
 from tkinter import ttk
 
-from config import APP_VERSION, CONFIG_FILE_NAME, get_base_dir, get_config
+from instance_lock import GUI_LOCK_NAME, acquire_instance_lock
+from config import (
+    APP_VERSION,
+    CONFIG_FILE_NAME,
+    EMERGENCY_HOTKEY_MODIFIERS,
+    EMERGENCY_STOP_EXIT_CODE,
+    get_base_dir,
+    get_config,
+    get_emergency_hotkey,
+)
 from debug_files import (
     clear_generated_debug_files,
     export_debug_zip,
@@ -106,17 +115,7 @@ DIFFICULTY_KEYS_BY_LABEL = {
 WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 EMERGENCY_HOTKEY_ID = 0x4DAA
-MODIFIER_FLAGS = {
-    "alt": 0x0001,
-    "ctrl": 0x0002,
-    "control": 0x0002,
-    "shift": 0x0004,
-    "win": 0x0008,
-}
-FUNCTION_KEY_VK = {
-    f"F{index}": 0x70 + index - 1
-    for index in range(1, 25)
-}
+ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 
 try:
     USER32 = ctypes.WinDLL("user32", use_last_error=True) if os.name == "nt" else None
@@ -168,6 +167,16 @@ if USER32 is not None:
         wintypes.LPARAM,
     ]
     USER32.PostThreadMessageW.restype = wintypes.BOOL
+    USER32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT]
+    USER32.MessageBoxW.restype = ctypes.c_int
+    USER32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    USER32.FindWindowW.restype = wintypes.HWND
+    USER32.IsIconic.argtypes = [wintypes.HWND]
+    USER32.IsIconic.restype = wintypes.BOOL
+    USER32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    USER32.ShowWindow.restype = wintypes.BOOL
+    USER32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    USER32.SetForegroundWindow.restype = wintypes.BOOL
 
 if KERNEL32 is not None:
     # GetCurrentThreadId is exported by kernel32.dll, not user32.dll.
@@ -188,35 +197,13 @@ def config_bool_value(name, default):
 
 
 def parse_emergency_hotkey_config():
-    modifiers_text = str(
-        get_config().get("emergency_hotkey_modifiers", "ctrl+shift")
-    ).strip()
-    key_text = str(get_config().get("emergency_hotkey_key", "F12")).strip().upper()
-
+    names, key_vk, display = get_emergency_hotkey()
     modifiers = 0
-    display_parts = []
 
-    for part in re.split(r"[+\s]+", modifiers_text.lower()):
-        if not part:
-            continue
+    for name in names:
+        modifiers |= EMERGENCY_HOTKEY_MODIFIERS[name][0]
 
-        flag = MODIFIER_FLAGS.get(part)
-
-        if flag is None:
-            continue
-
-        modifiers |= flag
-        display_parts.append("Ctrl" if part in {"ctrl", "control"} else part.title())
-
-    if key_text in FUNCTION_KEY_VK:
-        vk = FUNCTION_KEY_VK[key_text]
-    elif len(key_text) == 1 and key_text.isalnum():
-        vk = ord(key_text)
-    else:
-        vk = None
-
-    display = " + ".join(display_parts + ([key_text] if key_text else []))
-    return modifiers, vk, display or "Ctrl + Shift + F12"
+    return modifiers, key_vk, display
 
 KEY_INFO_LINES = [
     "Before using, make sure the following are ready:",
@@ -461,12 +448,15 @@ class RoutePlannerApp:
             command=self.export_debug_zip,
         ).grid(row=0, column=0, sticky="w")
 
-        tk.Label(
+        self.hotkey_label = tk.Label(
             tools,
             text=f"Emergency stop hotkey: {self.emergency_hotkey_display}",
             anchor="w",
+            justify="left",
+            wraplength=250,
             fg="#444444",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        )
+        self.hotkey_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         # Every tick box sits in one grid, so both columns share a left edge and spacing.
         options = tk.Frame(control_frame)
@@ -633,9 +623,7 @@ class RoutePlannerApp:
                 f"thread_id={thread_id} | hotkey_id={EMERGENCY_HOTKEY_ID} | "
                 f"error_code={error_code}\n"
             )
-            self.notify_hotkey_status(
-                f"Emergency stop hotkey registration failed; GUI remains usable: {self.emergency_hotkey_display}"
-            )
+            self.notify_from_hotkey_thread(self.show_hotkey_unavailable, error_code)
             return
 
         self.hotkey_registered = True
@@ -665,6 +653,8 @@ class RoutePlannerApp:
                     break
 
                 if msg.message == WM_HOTKEY and msg.wParam == EMERGENCY_HOTKEY_ID:
+                    # Kill the bot right here so the stop never waits on the GUI thread.
+                    self.terminate_bot_now()
                     self.notify_hotkey_log(
                         "\n[GUI] Emergency hotkey WM_HOTKEY received | "
                         f"thread_id={thread_id} | hotkey_id={EMERGENCY_HOTKEY_ID}\n"
@@ -685,6 +675,29 @@ class RoutePlannerApp:
                 "\n[GUI] Emergency hotkey message loop exited.\n"
             )
 
+    def show_hotkey_unavailable(self, error_code):
+        reason = (
+            "is used by another program or another MAA window"
+            if error_code == ERROR_HOTKEY_ALREADY_REGISTERED
+            else f"could not be registered (Windows error {error_code})"
+        )
+        self.hotkey_label.configure(
+            text=f"{self.emergency_hotkey_display} {reason}. The bot still stops when you press it.",
+            fg="#b00020",
+        )
+
+    def terminate_bot_now(self):
+        """Kill a running bot from the hotkey thread; the GUI finishes the stop afterwards."""
+        process = self.bot_process
+
+        if process is None or process.poll() is not None:
+            return
+
+        try:
+            process.terminate()
+        except Exception:
+            pass
+
     def handle_emergency_hotkey(self):
         self.append_log_text("\n[GUI] EMERGENCY STOP triggered by global hotkey\n")
 
@@ -701,23 +714,20 @@ class RoutePlannerApp:
         if self.emergency_stop_pending:
             return
 
-        if self.bot_process is None or self.bot_process.poll() is not None:
+        if self.bot_process is None:
             self.status_var.set("Emergency stop hotkey triggered: bot is not running.")
             self.append_log_text("[GUI] Emergency stop hotkey pressed; no bot process was running.\n")
-
-            if self.bot_process is not None:
-                self.bot_process = None
-                self.close_bot_log_handle()
-
             return
 
         self.emergency_stop_pending = True
         self.status_var.set("Emergency stop hotkey triggered: stopping bot...")
 
-        try:
-            self.bot_process.terminate()
-        except Exception as e:
-            self.append_log_text(f"[GUI] Emergency terminate failed: {e}\n")
+        # The hotkey thread usually killed it already; make sure.
+        if self.bot_process.poll() is None:
+            try:
+                self.bot_process.terminate()
+            except Exception as e:
+                self.append_log_text(f"[GUI] Emergency terminate failed: {e}\n")
 
         self.root.after(750, self.finish_emergency_stop_bot_process)
 
@@ -1347,7 +1357,8 @@ class RoutePlannerApp:
 
         self.refresh_process_log()
 
-        if self.bot_process is not None:
+        # During an emergency stop, finish_emergency_stop_bot_process does the cleanup.
+        if self.bot_process is not None and not self.emergency_stop_pending:
             code = self.bot_process.poll()
 
             if code is not None:
@@ -1355,6 +1366,9 @@ class RoutePlannerApp:
                 self.bot_process = None
                 self.close_bot_log_handle()
                 self.cleanup_after_clean_stop(process_exit_code=code)
+
+                if code == EMERGENCY_STOP_EXIT_CODE:
+                    self.status_var.set(f"Emergency stop executed: bot stopped ({self.emergency_hotkey_display}).")
 
         if not self.is_closing:
             self.root.after(1000, self.refresh_bot_status)
@@ -1515,11 +1529,38 @@ class RoutePlannerApp:
             messagebox.showerror("Load failed", f"Could not load {OUTPUT_FILE.name}:\n\n{e}")
 
 
+def show_already_open():
+    """Say the app is already open, then bring the open window to the front."""
+    message = (
+        "MAA Task Bar Hero is already open.\n\n"
+        "Use the window that is already running. Two copies would fight over the "
+        "game and the emergency stop hotkey."
+    )
+
+    if USER32 is None:
+        print(message)
+        return
+
+    MB_ICONINFORMATION = 0x40
+    MB_SETFOREGROUND = 0x10000
+    USER32.MessageBoxW(None, message, "MAA Task Bar Hero", MB_ICONINFORMATION | MB_SETFOREGROUND)
+
+    hwnd = USER32.FindWindowW(None, f"MAA Task Bar Hero - v{APP_VERSION}")
+
+    if hwnd:
+        if USER32.IsIconic(hwnd):
+            USER32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+        USER32.SetForegroundWindow(hwnd)
+
+
 if __name__ == "__main__":
     if "--bot" in sys.argv:
         import main
 
         main.run_main_with_fatal_logging()
+    elif not acquire_instance_lock(GUI_LOCK_NAME):
+        show_already_open()
     else:
         root = tk.Tk()
         app = RoutePlannerApp(root)

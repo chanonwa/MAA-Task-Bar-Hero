@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -387,6 +388,39 @@ def get_config():
         _CONFIG_CACHE = load_config()
 
     return _CONFIG_CACHE
+
+
+# Emergency stop hotkey modifiers: name -> (RegisterHotKey flag, virtual-key codes).
+EMERGENCY_HOTKEY_MODIFIERS = {
+    "alt": (0x0001, (0x12,)),
+    "ctrl": (0x0002, (0x11,)),
+    "control": (0x0002, (0x11,)),
+    "shift": (0x0004, (0x10,)),
+    "win": (0x0008, (0x5B, 0x5C)),
+}
+# Exit code of a bot stopped by its own emergency key watch.
+EMERGENCY_STOP_EXIT_CODE = 3
+
+
+def get_emergency_hotkey():
+    """
+    The emergency stop hotkey from config (default Ctrl + Shift + F12) as
+    (modifier names, key virtual-key code or None, display text).
+    """
+    modifiers_text = str(get_config().get("emergency_hotkey_modifiers", "ctrl+shift")).strip().lower()
+    key_text = str(get_config().get("emergency_hotkey_key", "F12")).strip().upper()
+    names = [part for part in re.split(r"[+\s]+", modifiers_text) if part in EMERGENCY_HOTKEY_MODIFIERS]
+
+    if re.fullmatch(r"F([1-9]|1[0-9]|2[0-4])", key_text):
+        key_vk = 0x70 + int(key_text[1:]) - 1
+    elif len(key_text) == 1 and key_text.isalnum():
+        key_vk = ord(key_text)
+    else:
+        key_vk = None
+
+    display_parts = ["Ctrl" if name in {"ctrl", "control"} else name.title() for name in names]
+    display = " + ".join(display_parts + ([key_text] if key_text else []))
+    return names, key_vk, display or "Ctrl + Shift + F12"
 
 
 def get_recognition_mode():
