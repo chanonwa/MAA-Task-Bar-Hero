@@ -433,58 +433,67 @@ class RoutePlannerApp:
             command=self.stop_bot,
         ).grid(row=0, column=1, padx=(0, 12), pady=(10, 4))
 
-        tk.Button(
-            control_frame,
-            text="Export Debug ZIP",
-            width=18,
-            command=self.export_debug_zip,
-        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=(10, 8), pady=(0, 8))
-
         tk.Label(
             control_frame,
             text="Retries when no chest drops:",
             anchor="w",
         ).grid(row=0, column=2, sticky="w", padx=(0, 4), pady=(10, 4))
 
-        tk.Checkbutton(
+        tk.Entry(
             control_frame,
-            text="Move backpack items to storage",
-            variable=self.move_to_storage_var,
-        ).grid(row=1, column=2, columnspan=3, sticky="w", padx=(0, 10), pady=(4, 10))
+            textvariable=self.no_chest_retries_var,
+            width=6,
+        ).grid(row=0, column=3, sticky="w", pady=(10, 4))
 
-        tk.Checkbutton(
+        tk.Label(
             control_frame,
-            text="Repeat the same level after a blue chest",
-            variable=self.repeat_same_level_var,
-        ).grid(row=1, column=4, sticky="w", padx=(14, 10), pady=(4, 10))
+            textvariable=self.status_var,
+            anchor="w",
+        ).grid(row=0, column=4, sticky="ew", padx=(14, 10), pady=(10, 4))
 
-        tk.Checkbutton(
-            control_frame,
-            text="Try same-tier substitute when route navigation fails",
-            variable=self.same_tier_substitution_var,
-        ).grid(row=2, column=4, sticky="w", padx=(14, 10), pady=(0, 8))
+        tools = tk.Frame(control_frame)
+        tools.grid(row=1, column=0, rowspan=2, columnspan=2, sticky="nw", padx=(10, 8), pady=(6, 4))
 
-        tk.Checkbutton(
-            control_frame,
-            text="Stash All on stash tabs 1-4 in order (stacks items)",
-            variable=self.stack_stash_var,
-        ).grid(row=3, column=4, sticky="w", padx=(14, 10), pady=(0, 8))
+        tk.Button(
+            tools,
+            text="Export Debug ZIP",
+            width=18,
+            command=self.export_debug_zip,
+        ).grid(row=0, column=0, sticky="w")
 
-        tk.Checkbutton(
-            control_frame,
-            text="I own the Rune of Opening (Space opens all chests)",
-            variable=self.rune_of_opening_var,
-        ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 8))
+        tk.Label(
+            tools,
+            text=f"Emergency stop hotkey: {self.emergency_hotkey_display}",
+            anchor="w",
+            fg="#444444",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
 
-        tk.Checkbutton(
-            control_frame,
-            text="Boss run (use soulstones on act bosses after a blue chest)",
-            variable=self.use_soulstones_var,
-        ).grid(row=3, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 8))
+        # Every tick box sits in one grid, so both columns share a left edge and spacing.
+        options = tk.Frame(control_frame)
+        options.grid(row=1, column=2, rowspan=2, columnspan=3, sticky="nw", padx=(0, 10), pady=(6, 4))
+        option_columns = (
+            (
+                ("Move backpack items to storage", self.move_to_storage_var),
+                ("I own the Rune of Opening (Space opens all chests)", self.rune_of_opening_var),
+                ("Boss run (use soulstones on act bosses after a blue chest)", self.use_soulstones_var),
+            ),
+            (
+                ("Repeat the same level after a blue chest", self.repeat_same_level_var),
+                ("Try same-tier substitute when route navigation fails", self.same_tier_substitution_var),
+                ("Stash All on stash tabs 1-4 in order (stacks items)", self.stack_stash_var),
+                ("Background input mode (in development)", self.background_input_var),
+            ),
+        )
 
-        # Boss run sub-options, indented under the Boss run checkbox.
-        boss_options = tk.Frame(control_frame)
-        boss_options.grid(row=4, column=2, columnspan=2, sticky="w", padx=(22, 10), pady=(0, 8))
+        for column, column_options in enumerate(option_columns):
+            for row, (text, variable) in enumerate(column_options):
+                tk.Checkbutton(options, text=text, variable=variable).grid(
+                    row=row, column=column, sticky="w", padx=(0, 28), pady=2
+                )
+
+        # Boss run sub-options, indented under the Boss run tick box.
+        boss_options = tk.Frame(options)
+        boss_options.grid(row=len(option_columns[0]), column=0, sticky="w", padx=(22, 0), pady=2)
 
         tk.Checkbutton(
             boss_options,
@@ -501,37 +510,12 @@ class RoutePlannerApp:
         self.boss_runs_entry.grid(row=0, column=2, sticky="w")
         self.update_boss_run_count_state()
 
-        tk.Entry(
-            control_frame,
-            textvariable=self.no_chest_retries_var,
-            width=6,
-        ).grid(row=0, column=3, sticky="w", pady=(10, 4))
-
-        tk.Label(
-            control_frame,
-            textvariable=self.status_var,
-            anchor="w",
-        ).grid(row=0, column=4, sticky="ew", padx=(14, 10), pady=(10, 4))
-
-        tk.Checkbutton(
-            control_frame,
-            text="Background input mode (in development)",
-            variable=self.background_input_var,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=(10, 8), pady=(4, 10))
-
         tk.Label(
             control_frame,
             text=f"Concept & Direction: Marcus Xu · Build v{APP_VERSION}",
             anchor="e",
             fg="#666666",
-        ).grid(row=5, column=2, columnspan=3, sticky="e", padx=(8, 10), pady=(0, 8))
-
-        tk.Label(
-            control_frame,
-            text=f"Emergency stop hotkey: {self.emergency_hotkey_display}",
-            anchor="w",
-            fg="#444444",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(10, 8), pady=(0, 8))
+        ).grid(row=3, column=2, columnspan=3, sticky="e", padx=(8, 10), pady=(0, 8))
 
         # Log panel.
         log_frame = tk.LabelFrame(root, text="Bot Log")
