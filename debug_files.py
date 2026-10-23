@@ -101,7 +101,6 @@ MEANINGFUL_EVIDENCE_ARCNAMES.update({
 EXPECTED_CONFIG_KEYS = [
     "recognition_mode",
     "mouse_parking_enabled",
-    "mouse_parking_strategy",
     "use_expanded_roi_retry",
     "chapter_ambiguous_click_verify_enabled",
     "navigation_failure_policy",
@@ -599,7 +598,6 @@ def collect_session_identity(base_dir, preflight, gui_console_text):
         "recognition_mode": effective_config.get("recognition_mode", "unknown"),
         "active_recognition_mode": effective_config.get("recognition_mode", "unknown"),
         "mouse_parking_enabled": effective_config.get("mouse_parking_enabled", "unknown"),
-        "mouse_parking_strategy": effective_config.get("mouse_parking_strategy", "unknown"),
         "use_expanded_roi_retry": effective_config.get("use_expanded_roi_retry", "unknown"),
         "chapter_ambiguous_click_verify_enabled": effective_config.get(
             "chapter_ambiguous_click_verify_enabled",
@@ -962,7 +960,6 @@ def build_manifest(
         f"recognition_mode={identity['recognition_mode']}",
         f"active_recognition_mode={identity['active_recognition_mode']}",
         f"mouse_parking_enabled={identity['mouse_parking_enabled']}",
-        f"mouse_parking_strategy={identity['mouse_parking_strategy']}",
         f"use_expanded_roi_retry={identity['use_expanded_roi_retry']}",
         f"chapter_ambiguous_click_verify_enabled={identity['chapter_ambiguous_click_verify_enabled']}",
         f"navigation_failure_policy={identity['navigation_failure_policy']}",

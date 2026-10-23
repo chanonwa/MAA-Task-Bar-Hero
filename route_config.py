@@ -17,19 +17,15 @@ LEVEL_DOT_GREEN_MATCH_THRESHOLD = 0.65
 DIFFICULTY_TEMPLATES = {
     "normal": {
         "anchor": "templates/difficulty/anchor_difficulty_normal.png",
-        "tab": "templates/difficulty/tab_difficulty_normal.png",
     },
     "nightmare": {
         "anchor": "templates/difficulty/anchor_difficulty_nightmare.png",
-        "tab": "templates/difficulty/tab_difficulty_nightmare.png",
     },
     "hell": {
         "anchor": "templates/difficulty/anchor_difficulty_hell.png",
-        "tab": "templates/difficulty/tab_difficulty_hell.png",
     },
     "torment": {
         "anchor": "templates/difficulty/anchor_difficulty_torment.png",
-        "tab": "templates/difficulty/tab_difficulty_torment.png",
     },
 }
 
@@ -37,14 +33,17 @@ CHAPTER_TEMPLATES = {
     "chapter_1": {
         "normal": "templates/chapters/chapter_1.png",
         "selected": "templates/chapters/chapter_1_selected.png",
+        "ribbon": "templates/chapters/chapter_1_ribbon.png",
     },
     "chapter_2": {
         "normal": "templates/chapters/chapter_2.png",
         "selected": "templates/chapters/chapter_2_selected.png",
+        "ribbon": "templates/chapters/chapter_2_ribbon.png",
     },
     "chapter_3": {
         "normal": "templates/chapters/chapter_3.png",
         "selected": "templates/chapters/chapter_3_selected.png",
+        "ribbon": "templates/chapters/chapter_3_ribbon.png",
     },
 }
 

@@ -272,6 +272,10 @@ class RoutePlannerApp:
         self.use_soulstones_var = tk.BooleanVar(
             value=config_bool_value("use_soulstones_for_act_bosses", False)
         )
+        self.boss_use_all_var = tk.BooleanVar(
+            value=config_bool_value("act_boss_use_all_soulstones", False)
+        )
+        self.boss_runs_var = tk.StringVar(value=str(get_config().get("act_boss_max_attempts", 1)))
         self.repeat_same_level_var = tk.BooleanVar(
             value=config_bool_value("repeat_same_level_after_blue_chest", False)
         )
@@ -475,9 +479,28 @@ class RoutePlannerApp:
 
         tk.Checkbutton(
             control_frame,
-            text="Fight act bosses with soulstones after a blue chest",
+            text="Boss run (use soulstones on act bosses after a blue chest)",
             variable=self.use_soulstones_var,
         ).grid(row=3, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 8))
+
+        # Boss run sub-options, indented under the Boss run checkbox.
+        boss_options = tk.Frame(control_frame)
+        boss_options.grid(row=4, column=2, columnspan=2, sticky="w", padx=(22, 10), pady=(0, 8))
+
+        tk.Checkbutton(
+            boss_options,
+            text="Use all soulstones",
+            variable=self.boss_use_all_var,
+            command=self.update_boss_run_count_state,
+        ).grid(row=0, column=0, sticky="w")
+
+        tk.Label(boss_options, text="Boss runs per blue chest:").grid(
+            row=0, column=1, sticky="w", padx=(12, 4)
+        )
+
+        self.boss_runs_entry = tk.Entry(boss_options, textvariable=self.boss_runs_var, width=4)
+        self.boss_runs_entry.grid(row=0, column=2, sticky="w")
+        self.update_boss_run_count_state()
 
         tk.Entry(
             control_frame,
@@ -502,7 +525,7 @@ class RoutePlannerApp:
             text=f"Concept & Direction: Marcus Xu · Build {APP_VERSION}",
             anchor="e",
             fg="#666666",
-        ).grid(row=4, column=2, columnspan=3, sticky="e", padx=(8, 10), pady=(0, 8))
+        ).grid(row=5, column=2, columnspan=3, sticky="e", padx=(8, 10), pady=(0, 8))
 
         tk.Label(
             control_frame,
@@ -841,6 +864,25 @@ class RoutePlannerApp:
 
         return retries
 
+    def update_boss_run_count_state(self):
+        # With "Use all soulstones" ticked the run count does not apply.
+        self.boss_runs_entry.configure(state="disabled" if self.boss_use_all_var.get() else "normal")
+
+    def get_boss_runs_from_input(self):
+        try:
+            runs = int(self.boss_runs_var.get().strip())
+        except ValueError:
+            runs = 0
+
+        if runs < 1:
+            messagebox.showwarning(
+                "Invalid boss run count",
+                "Boss runs per blue chest must be a whole number of 1 or more."
+            )
+            return None
+
+        return runs
+
     def save_gui_options_config(self):
         config_path = BASE_DIR / CONFIG_FILE_NAME
 
@@ -864,6 +906,12 @@ class RoutePlannerApp:
         config["stack_stash_after_transfer"] = bool(self.stack_stash_var.get())
         config["has_rune_of_opening"] = bool(self.rune_of_opening_var.get())
         config["use_soulstones_for_act_bosses"] = bool(self.use_soulstones_var.get())
+        config["act_boss_use_all_soulstones"] = bool(self.boss_use_all_var.get())
+
+        try:
+            config["act_boss_max_attempts"] = max(1, int(self.boss_runs_var.get().strip()))
+        except ValueError:
+            pass
 
         with config_path.open("w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
@@ -995,6 +1043,9 @@ class RoutePlannerApp:
         if no_chest_retries is None:
             return False
 
+        if not self.boss_use_all_var.get() and self.get_boss_runs_from_input() is None:
+            return False
+
         try:
             self.save_gui_options_config()
         except OSError as e:
@@ -1063,6 +1114,8 @@ class RoutePlannerApp:
             env["MAATBH_STACK_STASH_AFTER_TRANSFER"] = "1" if self.stack_stash_var.get() else "0"
             env["MAATBH_HAS_RUNE_OF_OPENING"] = "1" if self.rune_of_opening_var.get() else "0"
             env["MAATBH_USE_SOULSTONES"] = "1" if self.use_soulstones_var.get() else "0"
+            env["MAATBH_ACT_BOSS_USE_ALL"] = "1" if self.boss_use_all_var.get() else "0"
+            env["MAATBH_ACT_BOSS_MAX_ATTEMPTS"] = self.boss_runs_var.get().strip()
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             self.write_bot_console_log(f"=== Input mode: {input_mode} ===\n")
@@ -1080,7 +1133,11 @@ class RoutePlannerApp:
                 f"=== Rune of Opening (Space opens all chests): {'on' if self.rune_of_opening_var.get() else 'off'} ===\n"
             )
             self.write_bot_console_log(
-                f"=== Fight act bosses with soulstones: {'on' if self.use_soulstones_var.get() else 'off'} ===\n"
+                f"=== Boss run (soulstones): {'on' if self.use_soulstones_var.get() else 'off'} ===\n"
+            )
+            self.write_bot_console_log(
+                "=== Boss runs per blue chest: "
+                f"{'all soulstones' if self.boss_use_all_var.get() else self.boss_runs_var.get().strip()} ===\n"
             )
             bot_command = (
                 [sys.executable, "--bot"]

@@ -32,6 +32,7 @@
     },
     "act_boss_fight_timeout_seconds": 300.0,
     "act_boss_max_attempts": 1,
+    "act_boss_use_all_soulstones": false,
     "recover_orphan_blue_chest_before_boss": true,
     "orphan_blue_chest_confirm_cycles": 2,
     "orphan_blue_chest_near_threshold_margin": 0.03,

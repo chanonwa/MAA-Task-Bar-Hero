@@ -16,6 +16,11 @@ BACKGROUND_KEY_CODES = {
     "space": win32con.VK_SPACE,
 }
 
+# How long a found mouse rest point is trusted before it is looked up again.
+REST_POINT_CACHE_SECONDS = 30.0
+# A cursor this close to the rest point counts as already resting there.
+REST_POINT_TOLERANCE_PX = 4
+
 
 class InputController:
     """
@@ -59,6 +64,7 @@ class InputController:
         mouse_parking_fail_safe_min_screen_margin_px,
         mouse_parking_fallback_static_x,
         mouse_parking_fallback_static_y,
+        find_rest_point_in_image=None,
     ):
         self.write_log = write_log
         self.capture_window = capture_window
@@ -90,19 +96,15 @@ class InputController:
         self.mouse_parking_fail_safe_min_screen_margin_px = mouse_parking_fail_safe_min_screen_margin_px
         self.mouse_parking_fallback_static_x = mouse_parking_fallback_static_x
         self.mouse_parking_fallback_static_y = mouse_parking_fallback_static_y
+        self.find_rest_point_in_image = find_rest_point_in_image
+        self.rest_point_cache = None
         self.coordinate_scaling_status = None
-
-    def move_to(self, screen_x, screen_y, duration=0.05):
-        pyautogui.moveTo(screen_x, screen_y, duration=duration)
 
     def click(self, screen_x, screen_y):
         pyautogui.click(screen_x, screen_y)
 
     def scroll(self, amount):
         pyautogui.scroll(amount)
-
-    def press(self, key):
-        pyautogui.press(key)
 
     def hotkey(self, *keys):
         pyautogui.hotkey(*keys)
@@ -324,26 +326,6 @@ class InputController:
         except Exception:
             return self.get_virtual_screen_rect()
 
-    def get_monitor_rect_for_window(self, hwnd):
-        try:
-            monitor = win32api.MonitorFromWindow(
-                hwnd,
-                win32con.MONITOR_DEFAULTTONEAREST,
-            )
-            info = win32api.GetMonitorInfo(monitor)
-            return info.get("Work") or info.get("Monitor")
-        except Exception:
-            rect = self.safe_window_rect(hwnd)
-
-            if rect is None:
-                return self.get_virtual_screen_rect()
-
-            left, top, right, bottom = rect
-            return self.get_monitor_rect_for_point(
-                (left + right) // 2,
-                (top + bottom) // 2,
-            )
-
     def is_screen_point_fail_safe_risky(self, screen_x, screen_y, margin=None):
         monitor_rect = self.get_monitor_rect_for_point(screen_x, screen_y)
 
@@ -356,37 +338,12 @@ class InputController:
         if screen_x < left or screen_x >= right or screen_y < top or screen_y >= bottom:
             return True
 
-        return (
-            screen_x <= left + margin
-            or screen_x >= right - margin
-            or screen_y <= top + margin
-            or screen_y >= bottom - margin
-        )
-
-    def clamp_screen_point_to_safe_monitor_area(self, screen_x, screen_y, hwnd=None):
-        monitor_rect = (
-            self.get_monitor_rect_for_window(hwnd)
-            if hwnd is not None
-            else self.get_monitor_rect_for_point(screen_x, screen_y)
-        )
-
-        if monitor_rect is None:
-            return int(screen_x), int(screen_y), None
-
-        left, top, right, bottom = monitor_rect
-        margin = self.mouse_fail_safe_margin_px
-
-        if right - left <= margin * 2:
-            safe_x = (left + right) // 2
-        else:
-            safe_x = max(left + margin, min(int(screen_x), right - margin - 1))
-
-        if bottom - top <= margin * 2:
-            safe_y = (top + bottom) // 2
-        else:
-            safe_y = max(top + margin, min(int(screen_y), bottom - margin - 1))
-
-        return safe_x, safe_y, monitor_rect
+        # PyAutoGUI's fail-safe fires only in the screen corners, so a point is
+        # risky only when it is near a vertical and a horizontal edge at once. A
+        # game window pushed against one edge must still be clickable there.
+        near_side = screen_x <= left + margin or screen_x >= right - margin
+        near_top_or_bottom = screen_y <= top + margin or screen_y >= bottom - margin
+        return near_side and near_top_or_bottom
 
     def safe_pyautogui_move_to(self, screen_x, screen_y, label="mouse_move", duration=0.05):
         if self.is_screen_point_fail_safe_risky(screen_x, screen_y):
@@ -437,6 +394,87 @@ class InputController:
             self.write_log(f"Mouse hover failed safely | label={label} | reason={e}")
             return False
 
+    def get_rest_point(self, hwnd):
+        """
+        Local screenshot point of the HERO title on the middle panel. Nothing
+        there opens a tooltip, so resting the cursor on it closes any open one.
+        The point is cached while the window stays where it is.
+        """
+        if self.find_rest_point_in_image is None:
+            return None
+
+        window_rect = self.safe_window_rect(hwnd)
+        cache = self.rest_point_cache
+
+        if (
+            cache is not None
+            and cache["window_rect"] == window_rect
+            and time.time() - cache["found_at"] < REST_POINT_CACHE_SECONDS
+        ):
+            return cache["point"]
+
+        try:
+            point, confidence = self.find_rest_point_in_image(self.capture_window(hwnd))
+        except Exception as e:
+            self.write_log(f"Mouse rest point lookup failed | reason={e}")
+            return None
+
+        if point is None:
+            self.rest_point_cache = None
+            self.write_log(f"Mouse rest point not visible | confidence={confidence:.2f}")
+            return None
+
+        self.rest_point_cache = {
+            "window_rect": window_rect,
+            "point": point,
+            "found_at": time.time(),
+        }
+        self.write_log(f"Mouse rest point found | local={point} | confidence={confidence:.2f}")
+        return point
+
+    def rest_mouse(self, hwnd, reason="rest"):
+        """
+        Rest the cursor on the HERO title using real move events, so the game
+        closes whatever tooltip the last click or hover opened. Returns True
+        when the cursor is resting there. Foreground input only.
+        """
+        if (
+            self.use_background_input
+            or not self.mouse_parking_enabled
+            or self.mouse_parking_mode == "disabled"
+            or hwnd is None
+        ):
+            return False
+
+        point = self.get_rest_point(hwnd)
+
+        if point is None:
+            return False
+
+        _client_x, _client_y, screen_x, screen_y, _scaling = self.screenshot_local_to_click_coordinates(
+            hwnd,
+            point[0],
+            point[1],
+            label=f"mouse_rest:{reason}",
+        )
+
+        try:
+            cursor_x, cursor_y = win32api.GetCursorPos()
+
+            if (
+                abs(cursor_x - screen_x) <= REST_POINT_TOLERANCE_PX
+                and abs(cursor_y - screen_y) <= REST_POINT_TOLERANCE_PX
+            ):
+                return True
+        except Exception:
+            pass
+
+        if not self.hover_screen_point(screen_x, screen_y, label=f"mouse_rest:{reason}"):
+            return False
+
+        time.sleep(self.mouse_parking_wait_seconds)
+        return True
+
     def safe_pyautogui_click(self, screen_x, screen_y, label="mouse_click", button="left"):
         if self.is_screen_point_fail_safe_risky(screen_x, screen_y):
             self.write_log(
@@ -478,15 +516,6 @@ class InputController:
                 f"reason={e}"
             )
             return False
-
-    def screen_to_local(self, hwnd, screen_x, screen_y):
-        window_rect = self.safe_window_rect(hwnd)
-
-        if window_rect is None:
-            return int(screen_x), int(screen_y)
-
-        window_left, window_top, _, _ = window_rect
-        return int(screen_x - window_left), int(screen_y - window_top)
 
     def get_client_local_bounds(self, hwnd, window_rect):
         client_rect = self.safe_client_rect(hwnd)
@@ -604,38 +633,6 @@ class InputController:
         )
         return None
 
-    def get_monitor_safe_parking_point(self, hwnd, reason):
-        window_rect = self.safe_window_rect(hwnd)
-
-        if window_rect is None:
-            return None
-
-        x1, y1, x2, y2 = self.regions["map_panel"]
-        local_x = int(x1 + 0.50 * (x2 - x1))
-        local_y = int(y1 + 0.50 * (y2 - y1))
-        screen_x, screen_y = self.local_to_screen(hwnd, local_x, local_y)
-
-        clamped_x, clamped_y, monitor_rect = self.clamp_screen_point_to_safe_monitor_area(
-            screen_x,
-            screen_y,
-            hwnd=hwnd,
-        )
-        local_x, local_y = self.screen_to_local(hwnd, clamped_x, clamped_y)
-
-        self.write_log(
-            f"Mouse parking using monitor-safe fallback | reason={reason} | "
-            f"original_screen=({screen_x}, {screen_y}) | "
-            f"clamped_screen=({clamped_x}, {clamped_y}) | "
-            f"monitor_rect={self.format_diag_value(monitor_rect)}"
-        )
-
-        return {
-            "local": (int(local_x), int(local_y)),
-            "screen": (int(clamped_x), int(clamped_y)),
-            "source": "monitor_safe_point",
-            "confidence": None,
-        }
-
     def get_default_mouse_parking_point(self, hwnd):
         window_rect = self.safe_window_rect(hwnd)
 
@@ -705,16 +702,8 @@ class InputController:
             self.write_log(f"Mouse parking skipped | reason={reason} | why=no_window")
             return False
 
-        raw_strategy = str(
-            self.get_config().get("mouse_parking_strategy", "static_client_point")
-        ).strip().lower()
-
-        if raw_strategy in {"map_anchor", "anchor_map", "visual_anchor", "difficulty_anchor"}:
-            self.write_log(
-                f"Mouse parking skipped visual-anchor strategy disabled | "
-                f"reason={reason} | configured_strategy={raw_strategy} | "
-                "using=static_client_point"
-            )
+        if self.rest_mouse(hwnd, reason=reason):
+            return True
 
         parking_point = self.get_default_mouse_parking_point(hwnd)
 
@@ -756,11 +745,10 @@ class InputController:
             f"source={source} | wait={self.mouse_parking_wait_seconds:.2f}"
         )
 
-        if not self.safe_pyautogui_move_to(
+        if not self.hover_screen_point(
             screen_x,
             screen_y,
             label=f"mouse_parking:{reason}",
-            duration=0.05,
         ):
             self.write_log(f"Mouse parking skipped | reason={reason} | why=move_failed_safe")
             return False
@@ -970,6 +958,7 @@ class InputController:
             return False
 
         time.sleep(self.nav_click_delay_seconds)
+        self.rest_mouse(hwnd, reason=f"after_click:{label}")
         return True
 
     def scroll_map(self, hwnd, direction, repeat, focus, resolve_legacy_focus):
@@ -995,12 +984,9 @@ class InputController:
         except Exception as e:
             self.write_log(f"Window focus warning before scroll: {e}")
 
-        move_ok = self.safe_pyautogui_move_to(
-            screen_x,
-            screen_y,
-            label=f"scroll_map_{direction}",
-            duration=0.15,
-        )
+        # Hover the map with real move events; the wheel then scrolls it. There is
+        # no focus click, so a stage under the cursor is never pressed.
+        move_ok = self.hover_screen_point(screen_x, screen_y, label=f"scroll_map_{direction}")
 
         if not move_ok and focus["source"] != "static_map_panel":
             focus = resolve_legacy_focus(
@@ -1011,44 +997,12 @@ class InputController:
             local_y = focus["local_y"]
             screen_x = focus["screen_x"]
             screen_y = focus["screen_y"]
-            move_ok = self.safe_pyautogui_move_to(
-                screen_x,
-                screen_y,
-                label=f"scroll_map_{direction}_fallback",
-                duration=0.15,
-            )
+            move_ok = self.hover_screen_point(screen_x, screen_y, label=f"scroll_map_{direction}_fallback")
 
         if not move_ok:
             return False
 
         time.sleep(0.1)
-
-        # Focus map panel before scrolling.
-        click_ok = self.safe_pyautogui_click(
-            screen_x,
-            screen_y,
-            label=f"scroll_map_focus_{direction}",
-        )
-
-        if not click_ok and focus["source"] != "static_map_panel":
-            focus = resolve_legacy_focus(
-                reason=f"dynamic_focus_click_failed:{focus['source']}",
-                label=f"scroll_map_{direction}",
-            )
-            local_x = focus["local_x"]
-            local_y = focus["local_y"]
-            screen_x = focus["screen_x"]
-            screen_y = focus["screen_y"]
-            click_ok = self.safe_pyautogui_click(
-                screen_x,
-                screen_y,
-                label=f"scroll_map_focus_{direction}_fallback",
-            )
-
-        if not click_ok:
-            return False
-
-        time.sleep(0.15)
 
         if direction == "up":
             amount = 8
@@ -1070,6 +1024,7 @@ class InputController:
             f"repeat={repeat}"
         )
 
+        self.rest_mouse(hwnd, reason=f"after_scroll_{direction}")
         time.sleep(0.5)
         return True
 
@@ -1133,12 +1088,9 @@ class InputController:
                 except Exception as e:
                     self.write_log(f"Window focus warning before fast scroll: {e}")
 
-                move_ok = self.safe_pyautogui_move_to(
-                    screen_x,
-                    screen_y,
-                    label=f"fast_scroll_{direction}",
-                    duration=0.02,
-                )
+                # Hover the map with real move events; the wheel then scrolls it. There is
+                # no focus click, so a stage under the cursor is never pressed.
+                move_ok = self.hover_screen_point(screen_x, screen_y, label=f"fast_scroll_{direction}")
 
                 if not move_ok and focus["source"] != "static_map_panel":
                     focus = resolve_legacy_focus(
@@ -1149,40 +1101,12 @@ class InputController:
                     local_y = focus["local_y"]
                     screen_x = focus["screen_x"]
                     screen_y = focus["screen_y"]
-                    move_ok = self.safe_pyautogui_move_to(
-                        screen_x,
-                        screen_y,
-                        label=f"fast_scroll_{direction}_fallback",
-                        duration=0.02,
-                    )
+                    move_ok = self.hover_screen_point(screen_x, screen_y, label=f"fast_scroll_{direction}_fallback")
 
                 if not move_ok:
                     return False
 
-                click_ok = self.safe_pyautogui_click(
-                    screen_x,
-                    screen_y,
-                    label=f"fast_scroll_focus_{direction}",
-                )
-
-                if not click_ok and focus["source"] != "static_map_panel":
-                    focus = resolve_legacy_focus(
-                        reason=f"dynamic_fast_focus_click_failed:{focus['source']}",
-                        label=f"fast_scroll_{direction}",
-                    )
-                    local_x = focus["local_x"]
-                    local_y = focus["local_y"]
-                    screen_x = focus["screen_x"]
-                    screen_y = focus["screen_y"]
-                    click_ok = self.safe_pyautogui_click(
-                        screen_x,
-                        screen_y,
-                        label=f"fast_scroll_focus_{direction}_fallback",
-                    )
-
-                if not click_ok:
-                    return False
-                time.sleep(0.03)
+                time.sleep(0.1)
 
                 for index in range(burst_count):
                     units = burst_units + (remainder if index == burst_count - 1 else 0)
@@ -1212,4 +1136,5 @@ class InputController:
             f"scaling_active={focus['scaling_active']} | elapsed={elapsed:.2f}s"
         )
 
+        self.rest_mouse(hwnd, reason=f"after_fast_scroll_{direction}")
         return True

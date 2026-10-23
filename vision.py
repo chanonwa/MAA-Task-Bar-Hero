@@ -58,6 +58,7 @@ _NAV_CHAPTER_GEOMETRY_FALLBACK_ENABLED = True
 _NAV_CHAPTER_GEOMETRY_MIN_CONFIDENCE = 0.78
 _NAV_CHAPTER_GEOMETRY_REQUIRE_DYNAMIC_ANCHOR = True
 _NAV_CHAPTER_GEOMETRY_TOLERANCE_PX = 18
+_NAV_ACT_RIBBON_MATCH_THRESHOLD = 0.93
 _NAV_SELECTED_LEVEL_GREEN_PIXEL_MIN = 20
 _NAV_SELECTED_LEVEL_GREEN_RATIO_MIN = 0.03
 _NAV_SELECTED_LEVEL_GREEN_HSV_LOWER = (35, 40, 40)
@@ -177,6 +178,7 @@ def configure_navigation_visual_observation(
     route_invariant_level_confidence_floor,
     route_invariant_green_dot_min_confidence,
     route_invariant_require_level_y_ok,
+    act_ribbon_match_threshold=0.93,
 ):
     global _NAV_DIFFICULTY_TEMPLATES
     global _NAV_CHAPTER_TEMPLATES
@@ -206,6 +208,7 @@ def configure_navigation_visual_observation(
     global _NAV_ROUTE_INVARIANT_LEVEL_CONFIDENCE_FLOOR
     global _NAV_ROUTE_INVARIANT_GREEN_DOT_MIN_CONFIDENCE
     global _NAV_ROUTE_INVARIANT_REQUIRE_LEVEL_Y_OK
+    global _NAV_ACT_RIBBON_MATCH_THRESHOLD
 
     _NAV_DIFFICULTY_TEMPLATES = difficulty_templates
     _NAV_CHAPTER_TEMPLATES = chapter_templates
@@ -235,6 +238,7 @@ def configure_navigation_visual_observation(
     _NAV_ROUTE_INVARIANT_LEVEL_CONFIDENCE_FLOOR = route_invariant_level_confidence_floor
     _NAV_ROUTE_INVARIANT_GREEN_DOT_MIN_CONFIDENCE = route_invariant_green_dot_min_confidence
     _NAV_ROUTE_INVARIANT_REQUIRE_LEVEL_Y_OK = route_invariant_require_level_y_ok
+    _NAV_ACT_RIBBON_MATCH_THRESHOLD = act_ribbon_match_threshold
 
 
 def _write_log(message):
@@ -2397,11 +2401,100 @@ def summarize_chapter_candidates(resolved):
     )
 
 
+def white_text_mask(img):
+    """
+    Keep only near-white, unsaturated pixels. The act ribbon changes colour with
+    the difficulty, but its title text is always white.
+    """
+    pixels = img.astype(np.int16)
+    low = pixels.min(axis=2)
+    high = pixels.max(axis=2)
+    return (((low >= 200) & (high - low <= 40)) * 255).astype(np.uint8)
+
+
+def find_act_ribbon(img):
+    """
+    Read the act from the big ribbon under the act tabs ("Act 3").
+    Returns (chapter, center, confidence); chapter is None when no ribbon
+    template clears the threshold (for example a tooltip covers the ribbon).
+    """
+    region_img = crop(img, _VISUAL_REGIONS["map_panel"])
+
+    if region_img is None:
+        return None, None, 0.0
+
+    region_mask = white_text_mask(region_img)
+    x1, y1, _, _ = clamp_region(img, _VISUAL_REGIONS["map_panel"])
+    best_chapter = None
+    best_center = None
+    best_confidence = 0.0
+
+    for chapter, templates in _NAV_CHAPTER_TEMPLATES.items():
+        path = templates.get("ribbon")
+
+        if not path:
+            continue
+
+        try:
+            template_mask = white_text_mask(load_template(path))
+        except FileNotFoundError:
+            continue
+
+        if (
+            template_mask.shape[0] > region_mask.shape[0]
+            or template_mask.shape[1] > region_mask.shape[1]
+        ):
+            continue
+
+        result = cv2.matchTemplate(region_mask, template_mask, cv2.TM_CCOEFF_NORMED)
+        _, confidence, _, top_left = cv2.minMaxLoc(result)
+
+        if confidence > best_confidence:
+            best_chapter = chapter
+            best_confidence = float(confidence)
+            best_center = (
+                x1 + top_left[0] + template_mask.shape[1] // 2,
+                y1 + top_left[1] + template_mask.shape[0] // 2,
+            )
+
+    if best_confidence < _NAV_ACT_RIBBON_MATCH_THRESHOLD:
+        return None, best_center, best_confidence
+
+    return best_chapter, best_center, best_confidence
+
+
 def find_current_chapter(img):
     """
-    Identify the selected chapter by comparing selected-tab templates inside
-    the visible map panel.
+    Identify the selected chapter. The act ribbon ("Act 3") is read first; the
+    selected-tab templates and tab-row geometry are only needed when the ribbon
+    cannot be read, for example when a tooltip covers it.
     """
+    ribbon_chapter, ribbon_center, ribbon_confidence = find_act_ribbon(img)
+
+    if ribbon_chapter is not None:
+        # The ribbon names the act; the selected tab only supplies its position.
+        _, tab_center, tab_confidence, tab_info = find_template_in_box(
+            img,
+            _NAV_CHAPTER_TEMPLATES[ribbon_chapter]["selected"],
+            _VISUAL_REGIONS["map_panel"],
+            _NAV_CHAPTER_MATCH_THRESHOLD,
+            label=f"selected_{ribbon_chapter}"
+        )
+
+        if tab_confidence < _NAV_CHAPTER_GEOMETRY_MIN_CONFIDENCE:
+            tab_center = None
+
+        tab_info = dict(tab_info) if tab_info else {}
+        tab_info["template_identity"] = None
+        tab_info["ribbon_identity"] = ribbon_chapter
+        tab_info["ribbon_center"] = ribbon_center
+        tab_info["ribbon_confidence"] = ribbon_confidence
+        tab_info["geometry_identity"] = None
+        tab_info["geometry_used"] = False
+        tab_info["geometry_distance"] = None
+        tab_info["chapter_geometry"] = None
+        return ribbon_chapter, tab_center, ribbon_confidence, tab_info
+
     best_chapter = None
     best_center = None
     best_confidence = 0.0
@@ -2422,6 +2515,12 @@ def find_current_chapter(img):
             best_confidence = confidence
             best_info = match_info
 
+    _write_log(
+        f"Act ribbon not readable; using selected-tab templates | "
+        f"ribbon_best_confidence={ribbon_confidence:.2f} | "
+        f"threshold={_NAV_ACT_RIBBON_MATCH_THRESHOLD:.2f}"
+    )
+
     resolved = collect_chapter_tab_candidates(img)
     geometry = build_chapter_geometry(
         selected_center=best_center,
@@ -2438,6 +2537,8 @@ def find_current_chapter(img):
 
     if best_info is not None:
         best_info["template_identity"] = best_chapter
+        best_info["ribbon_identity"] = None
+        best_info["ribbon_confidence"] = ribbon_confidence
         best_info["geometry_identity"] = resolved_chapter if geometry_used else None
         best_info["geometry_used"] = geometry_used
         best_info["geometry_distance"] = geometry_distance

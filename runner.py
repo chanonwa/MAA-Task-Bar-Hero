@@ -39,6 +39,7 @@ from vision import (
     point_inside_region,
     collect_chapter_tab_candidates,
     find_current_chapter,
+    find_act_ribbon,
     find_chapter_tab_candidate,
     empty_route_target_observation,
     observe_route_target_state_from_image,
@@ -112,6 +113,20 @@ def env_flag(name, default=False):
         return default
 
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_positive_int(name, default):
+    value = os.environ.get(name)
+
+    if value is None:
+        return default
+
+    try:
+        value = int(value)
+    except ValueError:
+        return default
+
+    return value if value > 0 else default
 
 
 def config_bool(name, default):
@@ -199,20 +214,6 @@ def config_choice(name, default, allowed):
     return value if value in allowed else default
 
 
-def get_mouse_parking_strategy():
-    value = str(
-        get_config().get("mouse_parking_strategy", "static_client_point")
-    ).strip().lower()
-
-    if value in {"map_anchor", "anchor_map", "visual_anchor", "difficulty_anchor"}:
-        return "static_client_point"
-
-    if value in {"static_client_point", "default"}:
-        return value
-
-    return "static_client_point"
-
-
 def maybe_save_debug_screenshot(img, folder, prefix):
     if not SAVE_DEBUG_SCREENSHOTS:
         return None
@@ -255,6 +256,18 @@ CHAPTER_AMBIGUOUS_MIN_CONFIDENCE = config_non_negative_float(
 )
 CHAPTER_GEOMETRY_FALLBACK_ENABLED = config_bool("chapter_geometry_fallback_enabled", True)
 CHAPTER_GEOMETRY_TOLERANCE_PX = config_non_negative_int("chapter_geometry_tolerance_px", 18)
+# The act ribbon under the act tabs names the current act ("Act 3").
+ACT_RIBBON_MATCH_THRESHOLD = config_non_negative_float("act_ribbon_match_threshold", 0.93)
+# Act tab centers relative to the difficulty dropdown center; the tab row sits right under it.
+ACT_TAB_OFFSETS_FROM_DIFFICULTY_DROPDOWN = {
+    "chapter_1": (-118, 37),
+    "chapter_2": (-54, 37),
+    "chapter_3": (10, 37),
+}
+# After a PORTAL click the view is re-read this often until it shows the target.
+PORTAL_VIEW_POLL_SECONDS = 0.25
+DIFFICULTY_SWITCH_TIMEOUT_SECONDS = 3.0
+ACT_SWITCH_TIMEOUT_SECONDS = 2.0
 CHAPTER_GEOMETRY_MIN_CONFIDENCE = config_non_negative_float(
     "chapter_geometry_min_confidence",
     0.78,
@@ -281,10 +294,9 @@ MOUSE_PARKING_BEFORE_LEVEL_DETECTION = config_bool(
 )
 MOUSE_PARKING_MODE = config_choice(
     "mouse_parking_mode",
-    "recovery_only",
+    "normal",
     {"disabled", "recovery_only", "normal"},
 )
-MOUSE_PARKING_STRATEGY = get_mouse_parking_strategy()
 MOUSE_PARKING_STATIC_X = config_non_negative_int("mouse_parking_static_x", 320)
 MOUSE_PARKING_STATIC_Y = config_non_negative_int("mouse_parking_static_y", 120)
 MOUSE_PARKING_FAIL_SAFE_RELOCATE_ENABLED = config_bool(
@@ -297,11 +309,9 @@ MOUSE_PARKING_FAIL_SAFE_MIN_SCREEN_MARGIN_PX = config_non_negative_int(
 )
 MOUSE_PARKING_FALLBACK_STATIC_X = config_non_negative_int("mouse_parking_fallback_static_x", 320)
 MOUSE_PARKING_FALLBACK_STATIC_Y = config_non_negative_int("mouse_parking_fallback_static_y", 220)
-MOUSE_PARKING_FALLBACK_STRATEGY = config_choice(
-    "mouse_parking_fallback_strategy",
-    "monitor_safe_point",
-    {"monitor_safe_point", "window_safe_point"},
-)
+# Between actions the cursor rests on the HERO title (middle panel), which opens no tooltip.
+MOUSE_REST_TEMPLATE_PATH = get_config().get("mouse_rest_template", "templates/general/hero_title.png")
+MOUSE_REST_MATCH_THRESHOLD = 0.80
 MOUSE_FAIL_SAFE_MARGIN_PX = config_non_negative_int("mouse_fail_safe_margin_px", 40)
 MOUSE_MOVEMENT_FAIL_SAFE_POLICY = config_choice(
     "mouse_movement_fail_safe_policy",
@@ -312,26 +322,22 @@ COORDINATE_SCALING_ENABLED = config_bool("coordinate_scaling_enabled", True)
 COORDINATE_SCALING_AUTO_DETECT = config_bool("coordinate_scaling_auto_detect", True)
 COORDINATE_SCALING_TOLERANCE = config_non_negative_float("coordinate_scaling_tolerance", 0.05)
 PAUSE_ON_SEVERE_COORDINATE_MISMATCH = config_bool("pause_on_severe_coordinate_mismatch", False)
-DIFFICULTY_DROPDOWN_GEOMETRY_FALLBACK_ENABLED = config_bool(
-    "difficulty_dropdown_geometry_fallback_enabled",
-    True,
-)
+# The open difficulty list always shows these rows in this order under the dropdown;
+# the current difficulty is only highlighted.
+DIFFICULTY_DROPDOWN_ORDER = ("normal", "nightmare", "hell", "torment")
 DIFFICULTY_DROPDOWN_ROW_SPACING_PX = config_non_negative_int(
     "difficulty_dropdown_row_spacing_px",
-    43,
+    20,
 )
 DIFFICULTY_DROPDOWN_FIRST_ROW_OFFSET_Y = config_non_negative_int(
     "difficulty_dropdown_first_row_offset_y",
-    42,
+    23,
 )
 DIFFICULTY_DROPDOWN_OPTION_X_OFFSET = config_int(
     "difficulty_dropdown_option_x_offset",
     0,
 )
-DIFFICULTY_DROPDOWN_GEOMETRY_VERIFY_AFTER_CLICK = config_bool(
-    "difficulty_dropdown_geometry_verify_after_click",
-    True,
-)
+DIFFICULTY_LIST_OPEN_TIMEOUT_SECONDS = 1.5
 SAME_TIER_SUBSTITUTION_ENABLED = config_bool("same_tier_substitution_enabled", True)
 SAME_TIER_SUBSTITUTION_MAX_CANDIDATES = config_positive_int(
     "same_tier_substitution_max_candidates",
@@ -572,9 +578,27 @@ SOULSTONE_TOOLTIP_WAIT_SECONDS = config_non_negative_float("soulstone_tooltip_wa
 SOULSTONE_SCAN_MAX_AGE_SECONDS = 60
 ACT_BOSS_FIGHT_TIMEOUT_SECONDS = config_non_negative_float("act_boss_fight_timeout_seconds", 300.0)
 ACT_BOSS_CHEST_WAIT_SECONDS = config_non_negative_float("act_boss_chest_wait_seconds", 10.0)
-ACT_BOSS_MAX_ATTEMPTS = config_positive_int("act_boss_max_attempts", 1)
+ACT_BOSS_MAX_ATTEMPTS = env_positive_int(
+    "MAATBH_ACT_BOSS_MAX_ATTEMPTS",
+    config_positive_int("act_boss_max_attempts", 1),
+)
+# "Use all soulstones" keeps fighting until none are left; every fight uses one,
+# so the safety limit only trips if soulstones somehow stop being used up.
+ACT_BOSS_USE_ALL_SOULSTONES = env_flag(
+    "MAATBH_ACT_BOSS_USE_ALL",
+    config_bool("act_boss_use_all_soulstones", False),
+)
+ACT_BOSS_USE_ALL_SAFETY_LIMIT = 50
 ACT_BOSS_DIFFICULTY_ORDER = ("torment", "hell", "nightmare", "normal")
 ACT_BOSS_ACT_ORDER = (3, 2, 1)
+# The current stage (the one with the flag) is the only stage drawn with a bright
+# green highlight: its dot ring and its label.
+CURRENT_STAGE_GREEN_HSV_LOWER = (45, 150, 150)
+CURRENT_STAGE_GREEN_HSV_UPPER = (75, 255, 255)
+CURRENT_STAGE_GREEN_MIN_PIXELS = 150
+CURRENT_STAGE_LABEL_MATCH_THRESHOLD = 0.75
+# PORTAL map area (below the act tabs) relative to the difficulty dropdown center.
+PORTAL_MAP_OFFSETS_FROM_DIFFICULTY_DROPDOWN = (-146, 56, 154, 366)
 STORAGE_STASH_SEARCH_REGION =get_config().get("storage_stash_search_region", "hero_panel")
 STORAGE_GRID_ANCHOR_OFFSET_X = config_int("storage_grid_anchor_offset_x", -249)
 STORAGE_GRID_ANCHOR_OFFSET_Y = config_int("storage_grid_anchor_offset_y", -295)
@@ -706,6 +730,7 @@ configure_navigation_visual_observation(
     route_invariant_level_confidence_floor=ROUTE_INVARIANT_LEVEL_CONFIDENCE_FLOOR,
     route_invariant_green_dot_min_confidence=ROUTE_INVARIANT_GREEN_DOT_MIN_CONFIDENCE,
     route_invariant_require_level_y_ok=ROUTE_INVARIANT_REQUIRE_LEVEL_Y_OK,
+    act_ribbon_match_threshold=ACT_RIBBON_MATCH_THRESHOLD,
 )
 
 
@@ -1187,9 +1212,7 @@ def log_ui_coordinate_diagnostics(hwnd, title):
 
     if monitor_info["negative_window_coords"]:
         write_log(
-            "Mouse parking strategy=static_client_point recommended for negative-coordinate monitor setup | "
-            f"configured_strategy={MOUSE_PARKING_STRATEGY} | "
-            f"fallback={MOUSE_PARKING_FALLBACK_STRATEGY} | "
+            "Negative-coordinate monitor setup detected | "
             f"fail_safe_margin_px={MOUSE_FAIL_SAFE_MARGIN_PX}"
         )
 
@@ -1322,8 +1345,6 @@ def log_recognition_profile_startup():
         f"mouse_parking_difficulty={MOUSE_PARKING_BEFORE_DIFFICULTY_DETECTION} | "
         f"mouse_parking_level={MOUSE_PARKING_BEFORE_LEVEL_DETECTION} | "
         f"mouse_parking_mode={MOUSE_PARKING_MODE} | "
-        f"mouse_parking_strategy={MOUSE_PARKING_STRATEGY} | "
-        f"mouse_parking_fallback_strategy={MOUSE_PARKING_FALLBACK_STRATEGY} | "
         f"mouse_parking_fail_safe_relocate_enabled={MOUSE_PARKING_FAIL_SAFE_RELOCATE_ENABLED} | "
         f"mouse_parking_fail_safe_min_screen_margin_px={MOUSE_PARKING_FAIL_SAFE_MIN_SCREEN_MARGIN_PX} | "
         f"mouse_parking_fallback_static=({MOUSE_PARKING_FALLBACK_STATIC_X},{MOUSE_PARKING_FALLBACK_STATIC_Y}) | "
@@ -1338,6 +1359,7 @@ def log_recognition_profile_startup():
         f"soulstone_title_difficulties={sorted(SOULSTONE_TITLE_TEMPLATES) if isinstance(SOULSTONE_TITLE_TEMPLATES, dict) else 'invalid'} | "
         f"act_boss_fight_timeout={ACT_BOSS_FIGHT_TIMEOUT_SECONDS:.0f}s | "
         f"act_boss_max_attempts={ACT_BOSS_MAX_ATTEMPTS} | "
+        f"act_boss_use_all_soulstones={ACT_BOSS_USE_ALL_SOULSTONES} | "
         f"non_blue_box_click_cooldown={NON_BLUE_BOX_CLICK_COOLDOWN_SECONDS:.2f}s | "
         f"recover_orphan_blue_chest_before_boss={RECOVER_ORPHAN_BLUE_CHEST_BEFORE_BOSS} | "
         f"orphan_blue_chest_confirm_cycles={ORPHAN_BLUE_CHEST_CONFIRM_CYCLES} | "
@@ -1396,6 +1418,7 @@ def get_startup_template_specs():
     add_template_spec(specs, seen_paths, "general:storage_anchor", STORAGE_ANCHOR_TEMPLATE)
     add_template_spec(specs, seen_paths, "general:stash_sort", STASH_SORT_TEMPLATE)
     add_template_spec(specs, seen_paths, "general:stash_blank_slot", STASH_BLANK_TEMPLATE)
+    add_template_spec(specs, seen_paths, "general:mouse_rest_hero_title", MOUSE_REST_TEMPLATE_PATH)
 
     if isinstance(STASH_TAB_TEMPLATES, dict):
         for stash_name, path in STASH_TAB_TEMPLATES.items():
@@ -3098,6 +3121,10 @@ def scan_open_stash_tab_for_soulstones(stash_name, context):
         if difficulty:
             difficulties.add(difficulty)
 
+    if slots:
+        # Close the last soulstone tooltip before the stash is read again.
+        input_controller.rest_mouse(GAME_HWND, reason=f"soulstone_scan_done:{stash_name}")
+
     return difficulties
 
 
@@ -3231,7 +3258,9 @@ def run_act_boss_attempts_if_enabled():
     Spend soulstones on act bosses: hardest difficulty first, and within it the
     hardest unlocked act (3 -> 2 -> 1). A win re-enters the same "-10" stage
     while that difficulty still has soulstones; a loss drops to the next lower act.
-    After every fight the game returns to the stage it left by itself.
+    Stops after the configured number of fights, or when every soulstone is used
+    with "use all soulstones". The game returns to the stage it left after each fight,
+    and the PORTAL window is then left showing that stage.
     """
     if not USE_SOULSTONES_FOR_ACT_BOSSES:
         return
@@ -3245,7 +3274,11 @@ def run_act_boss_attempts_if_enabled():
         write_log("Act boss: no soulstones found; continuing the farm route.")
         return
 
-    write_log(f"Act boss run started | soulstone_difficulties={difficulties}")
+    fight_limit = ACT_BOSS_USE_ALL_SAFETY_LIMIT if ACT_BOSS_USE_ALL_SOULSTONES else ACT_BOSS_MAX_ATTEMPTS
+    write_log(
+        f"Act boss run started | soulstone_difficulties={difficulties} | "
+        f"use_all_soulstones={ACT_BOSS_USE_ALL_SOULSTONES} | fight_limit={fight_limit}"
+    )
     attempts = 0
     results = []
 
@@ -3255,7 +3288,7 @@ def run_act_boss_attempts_if_enabled():
 
             while (
                 route is not None
-                and attempts < ACT_BOSS_MAX_ATTEMPTS
+                and attempts < fight_limit
                 and difficulty in soulstone_difficulties
             ):
                 outcome = attempt_act_boss(route)
@@ -3270,13 +3303,176 @@ def run_act_boss_attempts_if_enabled():
                 if outcome == "loss":
                     break
 
-    if attempts >= ACT_BOSS_MAX_ATTEMPTS:
-        write_log(f"Act boss run stopped at the attempt limit | limit={ACT_BOSS_MAX_ATTEMPTS}")
+    if attempts >= fight_limit:
+        write_log(f"Act boss run stopped at the fight limit | limit={fight_limit}")
 
     write_log(
         f"Act boss run finished | attempts={attempts} | results={results or 'none'} | "
         f"soulstones_left={sorted(soulstone_difficulties) or 'none'}"
     )
+
+    if attempts:
+        show_current_stage_in_portal(get_current_route())
+
+
+def get_portal_map_region(img):
+    _name, anchor, confidence, _info = find_best_difficulty_anchor(img)
+
+    if anchor is None or confidence < DIFFICULTY_MATCH_THRESHOLD:
+        return None
+
+    dx1, dy1, dx2, dy2 = PORTAL_MAP_OFFSETS_FROM_DIFFICULTY_DROPDOWN
+    return clamp_region(img, (anchor[0] + dx1, anchor[1] + dy1, anchor[0] + dx2, anchor[1] + dy2))
+
+
+def find_current_stage_dot(img):
+    """
+    Center of the green-highlighted stage dot on the PORTAL map, or None when
+    the current stage is not in view. A bright green pixel count tells whether
+    it is in view; the green dot template then pins down where.
+    """
+    region = get_portal_map_region(img)
+
+    if region is None:
+        return None
+
+    x1, y1, x2, y2 = region
+    map_img = img[y1:y2, x1:x2]
+    green = cv2.inRange(
+        cv2.cvtColor(map_img, cv2.COLOR_BGR2HSV),
+        CURRENT_STAGE_GREEN_HSV_LOWER,
+        CURRENT_STAGE_GREEN_HSV_UPPER,
+    )
+
+    if cv2.countNonZero(green) < CURRENT_STAGE_GREEN_MIN_PIXELS:
+        return None
+
+    match = match_template(map_img, load_template(LEVEL_DOT_GREEN_TEMPLATE))
+
+    if match["confidence"] < LEVEL_DOT_GREEN_MATCH_THRESHOLD:
+        return None
+
+    return (x1 + match["center"][0], y1 + match["center"][1])
+
+
+def read_stage_label_next_to_dot(img, dot_center, chapter):
+    """
+    Name the stage whose label sits right of a stage dot ("3-1"). The current
+    stage's label is green while the label templates are white, so both are
+    compared in grayscale, where only the text shape counts.
+    """
+    x, y = dot_center
+    box = img[max(0, y - 14):y + 14, x + 6:x + 70]
+
+    if box.size == 0:
+        return None, 0.0
+
+    gray_box = cv2.cvtColor(box, cv2.COLOR_BGR2GRAY)
+    best_level, best_confidence = None, 0.0
+    checked = set()
+
+    for route in AVAILABLE_LEVELS:
+        if route["chapter"] != chapter or route["level"] in checked:
+            continue
+
+        checked.add(route["level"])
+
+        try:
+            template = cv2.cvtColor(load_template(route["level_template"]), cv2.COLOR_BGR2GRAY)
+        except FileNotFoundError:
+            continue
+
+        if template.shape[0] > gray_box.shape[0] or template.shape[1] > gray_box.shape[1]:
+            continue
+
+        confidence = cv2.minMaxLoc(cv2.matchTemplate(gray_box, template, cv2.TM_CCOEFF_NORMED))[1]
+
+        if confidence > best_confidence:
+            best_level, best_confidence = route["level"], confidence
+
+    if best_confidence < CURRENT_STAGE_LABEL_MATCH_THRESHOLD:
+        return None, best_confidence
+
+    return best_level, best_confidence
+
+
+def find_current_stage_in_open_act(hwnd):
+    """
+    Look for the green current stage in the open act: as the map is now, then
+    at its bottom and its top (the map has only those two scroll stops). The
+    map is scrolled with the wheel only, so no stage is pressed.
+    Returns (img, dot_center) or None.
+    """
+    img = capture_window(hwnd)
+    dot = find_current_stage_dot(img)
+
+    if dot is not None:
+        return img, dot
+
+    for direction in ("down", "up"):
+        if not fast_scroll_map_boundary(hwnd, direction, FAST_SCROLL_REPEAT):
+            return None
+
+        time.sleep(FAST_SCROLL_PAUSE)
+        img = capture_window(hwnd)
+        dot = find_current_stage_dot(img)
+
+        if dot is not None:
+            return img, dot
+
+    return None
+
+
+def show_current_stage_in_portal(expected_route=None):
+    """
+    Leave the PORTAL window showing the stage the game went back to after a boss
+    run: the flagged stage, drawn with a green highlight. It is only shown, never
+    pressed. The farm route's difficulty and act are checked first, then every
+    other difficulty and act, hardest first.
+    Returns {"difficulty", "chapter", "level"} or None.
+    """
+    views = []
+
+    if expected_route is not None:
+        views.append((expected_route["difficulty"], expected_route["chapter"]))
+
+    for difficulty in ACT_BOSS_DIFFICULTY_ORDER:
+        for chapter in reversed(CHAPTER_ORDER):
+            if (difficulty, chapter) not in views:
+                views.append((difficulty, chapter))
+
+    expected_label = route_target_label(expected_route) if expected_route is not None else "unknown"
+
+    for difficulty, chapter in views:
+        if difficulty not in DIFFICULTY_TEMPLATES or chapter not in CHAPTER_TEMPLATES:
+            continue
+
+        if not select_difficulty_and_chapter(GAME_HWND, {"difficulty": difficulty, "chapter": chapter}):
+            continue
+
+        found = find_current_stage_in_open_act(GAME_HWND)
+
+        if found is None:
+            write_log(f"Current stage not in this act | difficulty={difficulty} | chapter={chapter}")
+            continue
+
+        img, dot = found
+        level, confidence = read_stage_label_next_to_dot(img, dot, chapter)
+        back_where_left_off = (
+            expected_route is not None
+            and (difficulty, chapter, level)
+            == (expected_route["difficulty"], expected_route["chapter"], expected_route.get("level"))
+        )
+        write_log(
+            f"Current stage shown in PORTAL (not pressed) | difficulty={difficulty} | "
+            f"chapter={chapter} | stage={level or 'label not read'} | "
+            f"label_confidence={confidence:.2f} | dot={dot} | expected={expected_label} | "
+            f"back_where_left_off={back_where_left_off}"
+        )
+        return {"difficulty": difficulty, "chapter": chapter, "level": level}
+
+    write_log(f"Current stage highlight not found in any PORTAL view | expected={expected_label}")
+    return None
 
 
 def run_backpack_to_storage_transfer(context="blue_chest"):
@@ -3561,6 +3757,16 @@ def maybe_log_heartbeat(current_time, bot_info):
     )
 
 
+def find_mouse_rest_point(img):
+    """Center of the HERO title in a screenshot, or None when it is not visible."""
+    match = match_template(img, load_template(MOUSE_REST_TEMPLATE_PATH))
+
+    if match["confidence"] < MOUSE_REST_MATCH_THRESHOLD:
+        return None, match["confidence"]
+
+    return match["center"], match["confidence"]
+
+
 input_controller = InputController(
     write_log=write_log,
     capture_window=capture_window,
@@ -3592,39 +3798,15 @@ input_controller = InputController(
     mouse_parking_fail_safe_min_screen_margin_px=MOUSE_PARKING_FAIL_SAFE_MIN_SCREEN_MARGIN_PX,
     mouse_parking_fallback_static_x=MOUSE_PARKING_FALLBACK_STATIC_X,
     mouse_parking_fallback_static_y=MOUSE_PARKING_FALLBACK_STATIC_Y,
+    find_rest_point_in_image=find_mouse_rest_point,
 )
 
 # Preserve the old helper names in runner while the implementations live in actions.py.
-make_lparam = input_controller.make_lparam
-local_to_screen = input_controller.local_to_screen
 local_to_client = input_controller.local_to_client
-get_client_screen_point = input_controller.get_client_screen_point
-rect_width_height = input_controller.rect_width_height
-build_coordinate_scaling_status = input_controller.build_coordinate_scaling_status
 update_coordinate_scaling_status = input_controller.update_coordinate_scaling_status
-get_coordinate_scaling_status = input_controller.get_coordinate_scaling_status
 log_coordinate_scaling_status = input_controller.log_coordinate_scaling_status
 screenshot_local_to_click_coordinates = input_controller.screenshot_local_to_click_coordinates
-get_virtual_screen_rect = input_controller.get_virtual_screen_rect
-get_monitor_rect_for_point = input_controller.get_monitor_rect_for_point
-get_monitor_rect_for_window = input_controller.get_monitor_rect_for_window
-is_screen_point_fail_safe_risky = input_controller.is_screen_point_fail_safe_risky
-clamp_screen_point_to_safe_monitor_area = input_controller.clamp_screen_point_to_safe_monitor_area
-safe_pyautogui_move_to = input_controller.safe_pyautogui_move_to
-safe_pyautogui_click = input_controller.safe_pyautogui_click
-safe_pyautogui_scroll = input_controller.safe_pyautogui_scroll
-screen_to_local = input_controller.screen_to_local
-get_client_local_bounds = input_controller.get_client_local_bounds
-build_parking_point_from_local = input_controller.build_parking_point_from_local
-make_clamped_client_point = input_controller.make_clamped_client_point
-get_client_centerish_parking_candidates = input_controller.get_client_centerish_parking_candidates
-choose_safe_mouse_parking_candidate = input_controller.choose_safe_mouse_parking_candidate
-get_monitor_safe_parking_point = input_controller.get_monitor_safe_parking_point
-get_default_mouse_parking_point = input_controller.get_default_mouse_parking_point
 park_mouse_before_recognition = input_controller.park_mouse_before_recognition
-background_click_window_point = input_controller.background_click_window_point
-background_scroll_window_point = input_controller.background_scroll_window_point
-focus_window = input_controller.focus_window
 get_mouse_position = input_controller.position
 get_screen_size = input_controller.screen_size
 
@@ -4089,15 +4271,6 @@ def try_current_visible_level(hwnd, route, level_template, threshold, context):
             f"NAV current view: level not visible | "
             f"route={route['level']} | context={context} | "
             f"best_confidence={confidence:.2f} | threshold={threshold:.2f}"
-        )
-        save_visual_debug_artifacts(
-            img,
-            reason=f"level_not_found_current_view:{context}",
-            roi=REGIONS["map_panel"],
-            match_info=match_info,
-            target_name=route.get("level_template", route.get("level")),
-            confidence=confidence,
-            threshold=threshold,
         )
         return None
 
@@ -5031,9 +5204,6 @@ def record_route_navigation_failure(reason):
     return False
 
 
-DIFFICULTY_DROPDOWN_ORDER = ("normal", "nightmare", "hell", "torment")
-
-
 def difficulty_dropdown_geometry_option_center(anchor_center, difficulty):
     if anchor_center is None:
         return None, None
@@ -5054,103 +5224,11 @@ def difficulty_dropdown_geometry_option_center(anchor_center, difficulty):
     return (option_x, option_y), row_index
 
 
-def verify_difficulty_anchor_after_geometry_click(hwnd, difficulty, recovery_fallback=False):
-    park_mouse_before_recognition(
-        f"difficulty_geometry_verify:{difficulty}",
-        hwnd,
-        enabled=MOUSE_PARKING_BEFORE_DIFFICULTY_DETECTION,
-        recovery_fallback=recovery_fallback,
-    )
-    img_after = capture_window(hwnd)
-    verified_name, verified_center, anchor_conf, _ = find_best_difficulty_anchor(img_after)
-
-    if verified_name == difficulty and anchor_conf >= DIFFICULTY_MATCH_THRESHOLD:
-        write_log(
-            f"Difficulty dropdown geometry verification passed | "
-            f"target={difficulty} | verified_anchor={verified_name} | "
-            f"confidence={anchor_conf:.2f} | center={verified_center}"
-        )
-        return True, img_after, verified_name, anchor_conf
-
-    write_log(
-        f"Difficulty dropdown geometry verification failed | "
-        f"target={difficulty} | verified_anchor={verified_name} | "
-        f"confidence={anchor_conf:.2f} | threshold={DIFFICULTY_MATCH_THRESHOLD:.2f} | "
-        f"center={verified_center}"
-    )
-    return False, img_after, verified_name, anchor_conf
-
-
-def try_difficulty_dropdown_geometry_fallback(
-    hwnd,
-    difficulty,
-    anchor_center,
-    tab_confidence,
-    recovery_fallback=False,
-):
-    safe_tab_confidence = float(tab_confidence or 0.0)
-
-    if not DIFFICULTY_DROPDOWN_GEOMETRY_FALLBACK_ENABLED:
-        write_log(
-            f"Difficulty dropdown geometry fallback skipped | "
-            f"target={difficulty} | reason=disabled"
-        )
-        return False, None, None, safe_tab_confidence
-
-    option_center, row_index = difficulty_dropdown_geometry_option_center(anchor_center, difficulty)
-
-    if option_center is None:
-        write_log(
-            f"Difficulty dropdown geometry fallback skipped | "
-            f"target={difficulty} | reason=untrusted_anchor_or_invalid_config | "
-            f"anchor_center={anchor_center} | row_spacing={DIFFICULTY_DROPDOWN_ROW_SPACING_PX}"
-        )
-        return False, None, None, safe_tab_confidence
-
-    write_log(
-        f"Difficulty dropdown geometry fallback start | "
-        f"target={difficulty} | anchor_center={anchor_center} | "
-        f"row_index={row_index} | option_center={option_center} | "
-        f"template_confidence={safe_tab_confidence:.2f} | "
-        f"row_spacing={DIFFICULTY_DROPDOWN_ROW_SPACING_PX} | "
-        f"first_row_offset_y={DIFFICULTY_DROPDOWN_FIRST_ROW_OFFSET_Y} | "
-        f"option_x_offset={DIFFICULTY_DROPDOWN_OPTION_X_OFFSET}"
-    )
-
-    write_log(
-        f"Difficulty dropdown geometry click attempt | "
-        f"target={difficulty} | row_index={row_index} | "
-        f"computed_option_center={option_center}"
-    )
-    click_ok = click_window_point(
-        hwnd,
-        option_center[0],
-        option_center[1],
-        label=f"difficulty_dropdown_geometry_{difficulty}",
-    )
-
-    if not click_ok:
-        write_log(
-            f"Difficulty dropdown geometry verification failed | "
-            f"target={difficulty} | reason=click_failed_safely | "
-            f"computed_option_center={option_center}"
-        )
-        return False, None, None, safe_tab_confidence
-
-    time.sleep(2.0)
-
-    if not DIFFICULTY_DROPDOWN_GEOMETRY_VERIFY_AFTER_CLICK:
-        write_log(
-            f"Difficulty dropdown geometry verification failed | "
-            f"target={difficulty} | reason=verify_after_click_disabled_for_safety"
-        )
-        return False, None, None, safe_tab_confidence
-
-    return verify_difficulty_anchor_after_geometry_click(
-        hwnd,
-        difficulty,
-        recovery_fallback=recovery_fallback,
-    )
+def difficulty_list_is_open(img, anchor_center):
+    """The open option list is a black box under the dropdown; the map behind it never is."""
+    x, y = anchor_center
+    box = img[max(0, y + 18):y + 98, max(0, x - 70):x + 70]
+    return box.size > 0 and float((box.max(axis=2) < 20).mean()) >= 0.4
 
 
 def reset_chapter_ambiguous_attempt_scope(reason):
@@ -5555,15 +5633,12 @@ def skip_current_route_due_to_navigation_failure(reason, observed=None):
 
 def select_difficulty(hwnd, difficulty, recovery_fallback=False):
     """
-    Select difficulty using:
-    - anchor template: currently selected difficulty button / dropdown opener
-    - tab template: option inside opened dropdown
+    Select a difficulty: read the current one from the dropdown, open it, click
+    the target row by position, and confirm on the dropdown.
     """
     if difficulty not in DIFFICULTY_TEMPLATES:
         write_log(f"NAV FAILED: unknown difficulty {difficulty}")
         return False
-
-    templates = DIFFICULTY_TEMPLATES[difficulty]
 
     park_mouse_before_recognition(
         f"difficulty_anchor_detection:{difficulty}",
@@ -5617,164 +5692,145 @@ def select_difficulty(hwnd, difficulty, recovery_fallback=False):
         )
         return False
 
-    time.sleep(0.5)
-
-    # 3. After dropdown opens, find target difficulty tab.
-    park_mouse_before_recognition(
-        f"difficulty_dropdown_detection:{difficulty}",
+    # 3. Click the target row by position once the list is open. The rows never
+    # move, so no option template is needed; the dropdown confirms the switch.
+    list_open, _img, _seen, _conf, _elapsed = wait_for_portal_view(
         hwnd,
-        enabled=MOUSE_PARKING_BEFORE_DIFFICULTY_DETECTION,
-        recovery_fallback=recovery_fallback,
+        lambda img: (difficulty_list_is_open(img, current_anchor_center), 0.0),
+        True,
+        DIFFICULTY_LIST_OPEN_TIMEOUT_SECONDS,
     )
-    img_dropdown = capture_window(hwnd)
-
-    found_tab, tab_center, tab_conf, _ = find_template_in_box(
-        img_dropdown,
-        templates["tab"],
-        REGIONS["map_panel"],
-        DIFFICULTY_MATCH_THRESHOLD,
-        label=f"difficulty_dropdown_{difficulty}"
+    option_center, _row_index = difficulty_dropdown_geometry_option_center(
+        current_anchor_center,
+        difficulty,
     )
 
-    if not found_tab:
+    if not list_open or option_center is None:
         write_log(
-            f"Difficulty tab not found; reopening dropdown once | "
-            f"target={difficulty} | first_confidence={tab_conf:.2f}"
-        )
-
-        reopen_click_ok = click_window_point(
-            hwnd,
-            current_anchor_center[0],
-            current_anchor_center[1],
-            label="difficulty_anchor_reopen"
-        )
-
-        if not reopen_click_ok:
-            write_log(
-                f"NAV FAILED: difficulty anchor reopen click failed safely | "
-                f"target={difficulty} | center={current_anchor_center}"
-            )
-            return False
-
-        time.sleep(0.8)
-        park_mouse_before_recognition(
-            f"difficulty_dropdown_retry_detection:{difficulty}",
-            hwnd,
-            enabled=MOUSE_PARKING_BEFORE_DIFFICULTY_DETECTION,
-            recovery_fallback=recovery_fallback,
-        )
-        img_dropdown = capture_window(hwnd)
-
-        found_tab, tab_center, tab_conf, _ = find_template_in_box(
-            img_dropdown,
-            templates["tab"],
-            REGIONS["map_panel"],
-            DIFFICULTY_MATCH_THRESHOLD,
-            label=f"difficulty_dropdown_retry_{difficulty}"
-        )
-
-    if not found_tab:
-        geometry_ok, geometry_img, geometry_verified_name, geometry_conf = (
-            try_difficulty_dropdown_geometry_fallback(
-                hwnd,
-                difficulty,
-                current_anchor_center,
-                tab_conf,
-                recovery_fallback=recovery_fallback,
-            )
-        )
-
-        if geometry_ok:
-            return True
-
-        maybe_save_debug_screenshot(
-            geometry_img if geometry_img is not None else img_dropdown,
-            folder="debug_screenshots/nav_failures",
-            prefix=f"difficulty_tab_fail_{difficulty}"
-        )
-
-        write_log(
-            f"NAV FAILED: target difficulty tab not found after opening dropdown | "
-            f"target={difficulty} | tab_confidence={tab_conf:.2f} | "
-            f"geometry_verified={geometry_verified_name} | "
-            f"geometry_confidence={geometry_conf:.2f} | search_region=map_panel"
+            f"NAV FAILED: difficulty list did not open | target={difficulty} | "
+            f"list_open={list_open} | option_center={option_center}"
         )
         return False
 
-    write_log(
-        f"Clicking difficulty tab | difficulty={difficulty} | "
-        f"center={tab_center} | confidence={tab_conf:.2f}"
-    )
+    write_log(f"Clicking difficulty option by position | difficulty={difficulty} | center={option_center}")
 
-    tab_click_ok = click_window_point(
+    if not click_window_point(
         hwnd,
-        tab_center[0],
-        tab_center[1],
-        label=f"difficulty_tab_{difficulty}"
-    )
-
-    if not tab_click_ok:
+        option_center[0],
+        option_center[1],
+        label=f"difficulty_option_{difficulty}",
+    ):
         write_log(
-            f"NAV FAILED: difficulty tab click failed safely | "
-            f"target={difficulty} | center={tab_center}"
+            f"NAV FAILED: difficulty option click failed safely | "
+            f"target={difficulty} | center={option_center}"
         )
         return False
 
-    time.sleep(2.0)
-
-    # 4. Verify target anchor after selecting.
-    park_mouse_before_recognition(
-        f"difficulty_verify:{difficulty}",
+    # 4. Verify: the dropdown shows the target and the option list has closed.
+    verified, img_after, verified_name, anchor_conf_after, elapsed = wait_for_portal_view(
         hwnd,
-        enabled=MOUSE_PARKING_BEFORE_DIFFICULTY_DETECTION,
-        recovery_fallback=recovery_fallback,
+        read_settled_difficulty,
+        difficulty,
+        DIFFICULTY_SWITCH_TIMEOUT_SECONDS,
     )
-    img_after = capture_window(hwnd)
-    verified_name, verified_center, anchor_conf_after, _ = find_best_difficulty_anchor(img_after)
 
-    if verified_name == difficulty and anchor_conf_after >= DIFFICULTY_MATCH_THRESHOLD:
+    if verified:
         write_log(
             f"Difficulty verified | difficulty={difficulty} | "
-            f"anchor_confidence={anchor_conf_after:.2f} | center={verified_center}"
+            f"anchor_confidence={anchor_conf_after:.2f} | after={elapsed:.2f}s"
         )
         return True
 
     write_log(
-        f"Difficulty verification retry | target={difficulty} | "
-        f"first_verified={verified_name} | first_confidence={anchor_conf_after:.2f}"
-    )
-
-    time.sleep(0.8)
-    park_mouse_before_recognition(
-        f"difficulty_verify_retry:{difficulty}",
-        hwnd,
-        enabled=MOUSE_PARKING_BEFORE_DIFFICULTY_DETECTION,
-        recovery_fallback=recovery_fallback,
-    )
-    img_after_retry = capture_window(hwnd)
-    verified_name_retry, verified_center_retry, anchor_conf_retry, _ = find_best_difficulty_anchor(img_after_retry)
-
-    if verified_name_retry == difficulty and anchor_conf_retry >= DIFFICULTY_MATCH_THRESHOLD:
-        write_log(
-            f"Difficulty verified after retry | difficulty={difficulty} | "
-            f"anchor_confidence={anchor_conf_retry:.2f} | center={verified_center_retry}"
-        )
-        return True
-
-    write_log(
-        f"NAV WARNING: difficulty tab clicked but anchor verification failed | "
-        f"target={difficulty} | verified_anchor={verified_name_retry} | "
-        f"anchor_confidence={anchor_conf_retry:.2f}"
+        f"NAV WARNING: difficulty option clicked but the dropdown did not confirm it | "
+        f"target={difficulty} | verified_anchor={verified_name} | "
+        f"anchor_confidence={anchor_conf_after:.2f} | waited={elapsed:.2f}s"
     )
     save_visual_debug_artifacts(
-        img_after_retry,
+        img_after,
         reason=f"difficulty_verification_failed:{difficulty}",
         roi=REGIONS["map_panel"],
         target_name=DIFFICULTY_TEMPLATES[difficulty]["anchor"],
-        confidence=anchor_conf_retry,
+        confidence=anchor_conf_after,
         threshold=DIFFICULTY_MATCH_THRESHOLD,
     )
 
+    return False
+
+
+def wait_for_portal_view(hwnd, read_view, expected, timeout):
+    """
+    Re-read the PORTAL view until read_view(img) returns the expected value,
+    instead of sleeping a fixed time after a click.
+    Returns (ok, img, seen, confidence, elapsed).
+    """
+    started = time.time()
+
+    while True:
+        time.sleep(PORTAL_VIEW_POLL_SECONDS)
+        img = capture_window(hwnd)
+        seen, confidence = read_view(img)
+        elapsed = time.time() - started
+
+        if seen == expected or elapsed >= timeout:
+            return seen == expected, img, seen, confidence, elapsed
+
+
+def read_settled_difficulty(img):
+    """The dropdown's difficulty, once the act ribbon is readable again."""
+    name, _center, confidence, _info = find_best_difficulty_anchor(img)
+
+    if confidence < DIFFICULTY_MATCH_THRESHOLD or find_act_ribbon(img)[0] is None:
+        return None, confidence
+
+    return name, confidence
+
+
+def read_act_ribbon(img):
+    chapter, _center, confidence = find_act_ribbon(img)
+    return chapter, confidence
+
+
+def click_act_tab_by_position(hwnd, img, chapter):
+    """
+    Click an act tab at its fixed place under the difficulty dropdown and
+    confirm the switch on the act ribbon. Returns False when the tab could not
+    be placed or the ribbon did not confirm it, so the template path can run.
+    """
+    offset = ACT_TAB_OFFSETS_FROM_DIFFICULTY_DROPDOWN.get(chapter)
+    _name, anchor_center, anchor_conf, _info = find_best_difficulty_anchor(img)
+
+    if offset is None or anchor_center is None or anchor_conf < DIFFICULTY_MATCH_THRESHOLD:
+        return False
+
+    tab_x = anchor_center[0] + offset[0]
+    tab_y = anchor_center[1] + offset[1]
+    write_log(
+        f"Clicking act tab by position | chapter={chapter} | center=({tab_x}, {tab_y}) | "
+        f"dropdown_center={anchor_center}"
+    )
+
+    if not click_window_point(hwnd, tab_x, tab_y, label=f"act_tab_{chapter}"):
+        return False
+
+    verified, _img, seen, confidence, elapsed = wait_for_portal_view(
+        hwnd,
+        read_act_ribbon,
+        chapter,
+        ACT_SWITCH_TIMEOUT_SECONDS,
+    )
+
+    if verified:
+        write_log(
+            f"Chapter verified by act ribbon | chapter={chapter} | "
+            f"confidence={confidence:.2f} | after={elapsed:.2f}s"
+        )
+        return True
+
+    write_log(
+        f"Act tab position click not confirmed by the ribbon; trying tab templates | "
+        f"target={chapter} | ribbon={seen}:{confidence:.2f} | waited={elapsed:.2f}s"
+    )
     return False
 
 def select_chapter(hwnd, chapter, recovery_fallback=False):
@@ -5808,24 +5864,6 @@ def select_chapter(hwnd, chapter, recovery_fallback=False):
         if current_geometry_used
         else CHAPTER_MATCH_THRESHOLD
     )
-    current_geometry_source = (
-        current_geometry.get("source")
-        if isinstance(current_geometry, dict)
-        else None
-    )
-    if (
-        current_chapter == chapter
-        and selected_conf >= already_selected_threshold
-        and current_geometry_source == "selected_template_dynamic_anchor"
-    ):
-        write_log(
-            f"Chapter already-selected rejected due to weak self-anchored geometry | "
-            f"target={chapter} | current={current_chapter} | "
-            f"selected_center={selected_center} | confidence={selected_conf:.2f} | "
-            f"geometry_source={current_geometry_source} | "
-            f"centers={current_geometry.get('centers') if isinstance(current_geometry, dict) else None}"
-        )
-        current_chapter = None
 
     if current_chapter == chapter and selected_conf >= already_selected_threshold:
         write_log(
@@ -5839,7 +5877,14 @@ def select_chapter(hwnd, chapter, recovery_fallback=False):
         )
         return True
 
-    # 2. Find the target chapter's visible unselected tab inside map_panel.
+    # 2. With a readable ribbon, click the tab by position and let the ribbon confirm it.
+    if current_info and current_info.get("ribbon_identity"):
+        if click_act_tab_by_position(hwnd, img, chapter):
+            return True
+
+        img = capture_window(hwnd)
+
+    # 3. Find the target chapter's visible unselected tab inside map_panel.
     found_tab, tab_center, tab_conf, candidate_info = find_chapter_tab_candidate(
         img,
         chapter
@@ -5924,7 +5969,7 @@ def select_chapter(hwnd, chapter, recovery_fallback=False):
 
     time.sleep(0.8)
 
-    # 3. Verify selected chapter.
+    # 4. Verify selected chapter.
     park_mouse_before_recognition(
         f"chapter_verify:{chapter}",
         hwnd,
@@ -6805,6 +6850,13 @@ def find_and_click_level_by_template(hwnd, route):
     write_log(
         f"NAV FAILED: could not find level {route['level']} | "
         f"search_order={search_order}"
+    )
+    save_visual_debug_artifacts(
+        capture_window(hwnd),
+        reason=f"level_not_found:{route['level']}",
+        roi=REGIONS["map_panel"],
+        target_name=route.get("level_template", route.get("level")),
+        threshold=threshold,
     )
 
     return False
