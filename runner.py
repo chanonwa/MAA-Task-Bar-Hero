@@ -19,47 +19,30 @@ from vision import (
     save_visual_debug_artifacts,
     clamp_region,
     crop,
-    regions_equal,
-    expand_region_for_retry,
     get_expanded_roi_retry_reason,
-    expanded_roi_retry_enabled,
-    log_expanded_roi_retry_start,
-    log_expanded_roi_retry_result,
     detect_all_chests,
     draw_regions,
     draw_detections,
     save_all_regions,
-    print_detection_summary,
     detect_blue_log,
-    find_template_in_region,
     find_template_in_box,
-    find_template_candidates_in_box,
     detect_current_stash_page,
     check_stash_grid_space,
-    check_stash_last_slot_blank,
-    detect_boss_warning,
     detect_clear_screen,
     collect_detection_snapshot,
     detect_level_in_map,
     find_level_dot_left_of_text,
-    check_selected_level_green_text,
     verify_current_level_selected_by_green_text,
     level_match_passes_expected_y,
     find_best_difficulty_anchor,
-    chapter_order_index,
-    unique_points_by_x,
     build_chapter_geometry,
     point_inside_region,
-    classify_chapter_by_geometry,
-    apply_chapter_geometry_identity,
     collect_chapter_tab_candidates,
-    summarize_chapter_candidates,
     find_current_chapter,
     find_chapter_tab_candidate,
     empty_route_target_observation,
     observe_route_target_state_from_image,
     route_target_identity_matches,
-    route_invariant_selected_evidence_passes,
     route_target_invariant_passes,
     route_target_invariant_confidence_is_strong,
 )
@@ -95,7 +78,6 @@ from logger import safe_print, sanitize_text_for_output, timestamp
 from state import (
     BotRuntimeState,
     FREEZE_SECONDS_AFTER_SWITCH,
-    ORPHAN_BLUE_RECOVERY_SECONDS,
     POST_BOSS_DROP_WINDOW_SECONDS,
     RECOVERY_REWARD_HANDLED,
     STATE_FREEZE_AFTER_SWITCH,
@@ -272,7 +254,6 @@ CHAPTER_AMBIGUOUS_MIN_CONFIDENCE = config_non_negative_float(
     CHAPTER_TAB_CANDIDATE_THRESHOLD
 )
 CHAPTER_GEOMETRY_FALLBACK_ENABLED = config_bool("chapter_geometry_fallback_enabled", True)
-CHAPTER_TAB_SPACING_PX = config_positive_int("chapter_tab_spacing_px", 64)
 CHAPTER_GEOMETRY_TOLERANCE_PX = config_non_negative_int("chapter_geometry_tolerance_px", 18)
 CHAPTER_GEOMETRY_MIN_CONFIDENCE = config_non_negative_float(
     "chapter_geometry_min_confidence",
@@ -460,7 +441,6 @@ LEVEL_DOT_WHITE_MATCH_THRESHOLD = get_threshold("level_dot_white", LEVEL_DOT_WHI
 LEVEL_DOT_GREEN_MATCH_THRESHOLD = get_threshold("level_dot_green", LEVEL_DOT_GREEN_MATCH_THRESHOLD)
 LEVEL_STRONG_ACCEPT_THRESHOLD = max(0.88, get_threshold("current_level_detection", LEVEL_MATCH_THRESHOLD))
 LEVEL_CAUTIOUS_ACCEPT_THRESHOLD = get_threshold("level_cautious_accept", None)
-LEVEL_IGNORE_BELOW_THRESHOLD = get_threshold("level_ignore_below", None)
 DEFAULT_MAX_TRIALS_IF_NO_CHEST = config_positive_int("default_max_trials_if_no_chest", 5)
 DEFAULT_NO_CHEST_RETRIES = get_config().get(
     "default_no_chest_retries",
@@ -591,10 +571,6 @@ ACT_BOSS_MAX_ATTEMPTS = config_positive_int("act_boss_max_attempts", 1)
 ACT_BOSS_DIFFICULTY_ORDER = ("torment", "hell", "nightmare", "normal")
 ACT_BOSS_ACT_ORDER = (3, 2, 1)
 STORAGE_STASH_SEARCH_REGION =get_config().get("storage_stash_search_region", "hero_panel")
-STASH_LAST_SLOT_ANCHOR_OFFSET_X = config_int("stash_last_slot_anchor_offset_x", -9)
-STASH_LAST_SLOT_ANCHOR_OFFSET_Y = config_int("stash_last_slot_anchor_offset_y", -55)
-STASH_LAST_SLOT_WIDTH = config_positive_int("stash_last_slot_width", 38)
-STASH_LAST_SLOT_HEIGHT = config_positive_int("stash_last_slot_height", 38)
 STORAGE_GRID_ANCHOR_OFFSET_X = config_int("storage_grid_anchor_offset_x", -249)
 STORAGE_GRID_ANCHOR_OFFSET_Y = config_int("storage_grid_anchor_offset_y", -295)
 STORAGE_GRID_SLOT_WIDTH = config_positive_int("storage_grid_slot_width", 38)
@@ -611,8 +587,6 @@ STASH_PAGE_ORDER = ("stash_1", "stash_2", "stash_3", "stash_4")
 BLUE_ALERT_COOLDOWN_SECONDS = 10
 BROWN_LOG_COOLDOWN_SECONDS = 10
 NO_CHEST_RESET_SECONDS = 2
-last_boss_log_time = 0
-BOSS_LOG_COOLDOWN_SECONDS = 5
 last_manual_nav_time = 0
 
 chapter_ambiguous_click_attempts = {}
@@ -641,44 +615,9 @@ current_route_index = 0
 route_start_time = time.time()
 current_cycle_number = 1
 
-last_route_status_print_time = 0
-ROUTE_STATUS_PRINT_INTERVAL = 1.0
 GAME_HWND = None
-last_frame_signature = None
-last_frame_change_time = time.time()
-last_frame_stale_warning_time = 0
 
-last_blue_reward_signature = None
-last_blue_reward_handled_time = 0
 startup_runtime_initialized = False
-# def print_route_status(chest_state):
-#     global last_route_status_print_time
-
-#     current_time = time.time()
-
-#     if current_time - last_route_status_print_time < ROUTE_STATUS_PRINT_INTERVAL:
-#         return
-
-#     last_route_status_print_time = current_time
-
-#     route = get_current_route()
-#     elapsed, remaining, total = get_route_timing()
-
-#     if remaining <= 0:
-#         action = "READY TO SWITCH"
-#     else:
-#         action = "WAITING"
-
-#     msg = (
-#         f"Route {current_route_index + 1}/{len(ROUTE)} | "
-#         f"{route['difficulty']} {route['chapter']} {route['level']} | "
-#         f"Timer {format_seconds(elapsed)}/{format_seconds(total)} | "
-#         f"Remaining {format_seconds(remaining)} | "
-#         f"Chest {chest_state} | "
-#         f"{action}"
-#     )
-
-#     print(msg.ljust(180), end="\r")
 
 
 def now_str():
@@ -1940,19 +1879,6 @@ def get_max_trials_for_current_route():
     return total_clears
 
 
-def log_current_route_no_chest_policy(prefix):
-    route = get_current_route()
-    retries, total_clears, source = get_no_chest_policy_for_current_route()
-
-    write_log(
-        f"{prefix} route no-chest policy | "
-        f"route={route['name']} | difficulty={route['difficulty']} | "
-        f"chapter={route['chapter']} | level={route['level']} | "
-        f"no_chest_retries={retries} | total_no_chest_clears={total_clears} | "
-        f"source={source}"
-    )
-
-
 def reset_no_chest_trial_count(reason):
     state_memory.reset_no_chest_trial_count(reason, write_log=write_log)
 
@@ -2119,46 +2045,6 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
         "blue_log_visible": False,
         "message": "Advanced route; freeze started"
     }
-
-def retry_current_route(do_navigation=True):
-    """
-    Retry the current route without resetting the no-chest trial count.
-    """
-    global route_start_time
-    global bot_state
-    global freeze_start_time
-
-    route = get_current_route()
-    route_start_time = time.time()
-
-    write_log(
-        f"Retrying same level | route={route['name']} | "
-        f"{route['difficulty']} | {route['chapter']} | {route['level']} | "
-        f"no_chest_clears={state_memory.no_chest_trial_count}/{get_max_trials_for_current_route()}"
-    )
-
-    reset_route_detection_memory()
-
-    nav_success = True
-
-    if do_navigation:
-        time.sleep(1.0)
-        nav_success = navigate_to_current_route_if_enabled()
-
-        if not nav_success:
-            if record_route_navigation_failure("retry_current_route_failed"):
-                bot_state = STATE_STARTUP_NAVIGATION
-                write_log(
-                    "Retry navigation failed. Entering navigation retry state "
-                    "and ignoring detection decisions."
-                )
-            return
-
-    bot_state = STATE_FREEZE_AFTER_SWITCH
-    freeze_start_time = time.time()
-    reset_route_navigation_retries("retry_current_route_success")
-
-    write_log("Retry navigation completed. Entering freeze window.")
 
 
 def retry_detector_cycle_current_route():
@@ -2601,24 +2487,6 @@ def detect_storage_stash_page(screenshot):
         templates,
         get_storage_stash_search_region(),
         STASH_TAB_MATCH_THRESHOLD,
-    )
-
-
-def check_current_stash_last_slot(screenshot):
-    return check_stash_last_slot_blank(
-        screenshot,
-        STASH_BLANK_TEMPLATE,
-        STASH_SORT_TEMPLATE,
-        get_storage_stash_search_region(),
-        STORAGE_ANCHOR_MATCH_THRESHOLD,
-        STASH_LAST_SLOT_BLANK_THRESHOLD,
-        STASH_LAST_SLOT_UNCERTAIN_MARGIN,
-        STASH_LAST_SLOT_ANCHOR_OFFSET_X,
-        STASH_LAST_SLOT_ANCHOR_OFFSET_Y,
-        STASH_LAST_SLOT_WIDTH,
-        STASH_LAST_SLOT_HEIGHT,
-        save_debug=SAVE_DEBUG_SCREENSHOTS,
-        anchor_label="stash_sort",
     )
 
 
@@ -4223,12 +4091,6 @@ def try_current_visible_level(hwnd, route, level_template, threshold, context):
 
     return click_or_verify_level_dot(hwnd, match_info, route)
 
-def format_seconds(seconds):
-    seconds = max(0, int(seconds))
-    minutes = seconds // 60
-    secs = seconds % 60
-    return f"{minutes:02d}:{secs:02d}"
-
 
 def get_current_route():
     return state_memory.get_current_route(ROUTE, current_route_index)
@@ -4856,32 +4718,6 @@ def find_anchor_level(difficulty, chapter, exclude_level=None):
     return None
 
 
-def find_alternate_chapter_anchor(route):
-    difficulty = route.get("difficulty")
-    target_chapter = route.get("chapter")
-
-    for chapter in sorted(CHAPTER_TEMPLATES):
-        if chapter == target_chapter:
-            continue
-
-        anchor = find_anchor_level(difficulty, chapter)
-
-        if anchor is not None:
-            return anchor
-
-    return None
-
-
-def find_alternate_difficulty(route):
-    target_difficulty = route.get("difficulty")
-
-    for difficulty in DIFFICULTY_TEMPLATES:
-        if difficulty != target_difficulty:
-            return difficulty
-
-    return None
-
-
 def ordered_recovery_difficulties():
     preferred = ["normal", "nightmare", "hell", "torment"]
     ordered = [item for item in preferred if item in DIFFICULTY_TEMPLATES]
@@ -5172,24 +5008,6 @@ def record_route_navigation_failure(reason):
     )
     return False
 
-
-def get_route_timing():
-    """
-    Legacy timer helper.
-    stay_seconds is no longer required because route switching is event-driven.
-    Kept only so old overlay code does not crash.
-    """
-    route = get_current_route()
-
-    elapsed = time.time() - route_start_time
-    total = route.get("stay_seconds", 0)
-
-    if total > 0:
-        remaining = max(0, total - elapsed)
-    else:
-        remaining = 0
-
-    return elapsed, remaining, total
 
 DIFFICULTY_DROPDOWN_ORDER = ("normal", "nightmare", "hell", "torment")
 
@@ -6769,17 +6587,6 @@ def advance_route(do_navigation=False, reason="unknown"):
     write_log("Entering freeze window.")
     return True
 
-def reset_current_route_timer():
-    global route_start_time
-
-    route_start_time = time.time()
-    route = get_current_route()
-
-    write_log(
-        f"Reset timer for {route['name']} | "
-        f"{route['difficulty']} | {route['chapter']} | {route['level']}"
-    )
-
 
 def draw_route_overlay(debug_img, chest_state="none"):
     """
@@ -7038,13 +6845,11 @@ def initialize_startup_runtime():
 
 
 def main():
-    global last_boss_log_time
     global last_manual_nav_time
     global bot_state
     global freeze_start_time
     initialize_startup_runtime()
     get_config()
-    last_boss_log_time = 0
     input_mode = "background PostMessage" if USE_BACKGROUND_INPUT else "foreground mouse"
     log_session_start_marker(input_mode)
     log_cycle_start_marker()
@@ -7210,25 +7015,6 @@ def main():
 
         maybe_log_heartbeat(current_time, bot_info)
         print_bot_status_on_change(bot_info)
-        # print(
-        #     f"Bot state: {bot_info['state']} | "
-        #     f"Boss: {bot_info['boss_visible']} | "
-        #     f"Blue chest: {bot_info['blue_chest_visible']} | "
-        #     f"Blue log: {bot_info['blue_log_visible']} | "
-        #     f"{bot_info['message']}".ljust(180),
-        #     end="\r"
-        # )
-        # if boss_visible and current_time - last_boss_log_time >= BOSS_LOG_COOLDOWN_SECONDS:
-        #     last_boss_log_time = current_time
-
-        #     print(
-        #         f"\nBoss warning detected | "
-        #         f"region={boss_region} | "
-        #         f"red_pixels={boss_pixels} | "
-        #         f"confidence={boss_conf:.2f}"
-        #     )
-        #print_route_status(chest_state)
-        #print_detection_summary(detections)
 
         debug_img = draw_regions(img)
         debug_img = draw_detections(debug_img, detections)

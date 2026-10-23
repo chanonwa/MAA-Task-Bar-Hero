@@ -15,7 +15,6 @@ STATE_LOOK_FOR_BLUE_DROP = "look_for_blue_drop"
 
 FREEZE_SECONDS_AFTER_SWITCH = 5
 POST_BOSS_DROP_WINDOW_SECONDS = 45
-ORPHAN_BLUE_RECOVERY_SECONDS = 8
 
 RECOVERY_REWARD_HANDLED = "reward_handled"
 
@@ -23,15 +22,6 @@ RECOVERY_REWARD_HANDLED = "reward_handled"
 # Blue chests remain highest priority and keep the existing route-advance flow.
 # Brown/other non-blue boxes may be opened only during normal same-level
 # observation, without advancing routes or interrupting reward/navigation flow.
-
-
-@dataclass(frozen=True)
-class BotStatus:
-    state: str
-    boss_visible: bool = False
-    blue_chest_visible: bool = False
-    blue_log_visible: bool = False
-    message: str = ""
 
 
 @dataclass
@@ -251,16 +241,6 @@ def bot_status_signature(bot_info):
         bot_info["blue_chest_visible"],
         bot_info["blue_log_visible"],
     )
-
-
-def make_bot_info(state, boss_visible=False, blue_chest_visible=False, blue_log_visible=False, message=""):
-    return {
-        "state": state,
-        "boss_visible": boss_visible,
-        "blue_chest_visible": blue_chest_visible,
-        "blue_log_visible": blue_log_visible,
-        "message": message,
-    }
 
 
 def blue_signal_recent(last_seen_time, current_time, window_seconds):

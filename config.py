@@ -65,7 +65,6 @@ def emit_config_load_messages():
 
 
 DEFAULT_CONFIG = {
-    "ui_scale": 1.0,
     "recognition_mode": "balanced",
     "default_no_chest_retries": 4,
     "default_max_trials_if_no_chest": 5,
@@ -156,7 +155,6 @@ DEFAULT_CONFIG = {
     "orphan_blue_chest_near_threshold_margin": 0.03,
     "repeat_same_level_after_blue_chest": False,
     "assume_mailbox_after_max_trials": True,
-    "skip_level_if_already_selected": True,
     "move_backpack_to_storage_after_blue_chest": False,
     "move_backpack_to_storage_after_non_blue_box": True,
     "post_blue_chest_storage_wait_seconds": 0.8,
@@ -189,10 +187,6 @@ DEFAULT_CONFIG = {
         "stash_4": "templates/general/stash_4_selected.png",
     },
     "storage_stash_search_region": "hero_panel",
-    "stash_last_slot_anchor_offset_x": -9,
-    "stash_last_slot_anchor_offset_y": -55,
-    "stash_last_slot_width": 38,
-    "stash_last_slot_height": 38,
     "storage_grid_anchor_offset_x": -249,
     "storage_grid_anchor_offset_y": -295,
     "storage_grid_slot_width": 38,
@@ -202,9 +196,6 @@ DEFAULT_CONFIG = {
     "storage_grid_rows": 7,
     "storage_grid_cols": 7,
     "always_save_storage_diagnostics_on_failure": True,
-    "input_control_mode": "normal",
-    "force_game_window_before_action": False,
-    "max_input_retries": 3,
     "thresholds": {
         "chest_match": None,
         "chapter_tab_candidate": None,

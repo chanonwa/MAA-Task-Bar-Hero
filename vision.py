@@ -729,10 +729,6 @@ def get_expanded_roi_retry_reason():
     return ",".join(reasons)
 
 
-def expanded_roi_retry_enabled():
-    return get_expanded_roi_retry_reason() is not None
-
-
 def log_expanded_roi_retry_start(label, template_path, original_roi, expanded_roi, reason):
     _write_log(
         f"ROI retry start | target={label} | template={template_path} | "
@@ -909,23 +905,6 @@ def save_all_regions(img):
             )
 
 
-def print_detection_summary(detections):
-    if not detections:
-        _VISUAL_SAFE_PRINT("No chest detected.".ljust(160), end="\r")
-        return
-
-    parts = []
-
-    for det in detections:
-        parts.append(
-            f"{det['type']} {det['confidence']:.2f} "
-            f"at {det['center_full']} in {det['region_name']}"
-        )
-
-    msg = " | ".join(parts)
-    _VISUAL_SAFE_PRINT(msg[:160].ljust(160), end="\r")
-
-
 def detect_blue_log(img):
     """
     Search log_top and log_bottom for blue log text.
@@ -954,57 +933,6 @@ def detect_blue_log(img):
             return True, region_name, blue_pixels
 
     return False, best_region, best_pixels
-
-
-def find_template_in_region(img, template_path, region_name, threshold):
-    """
-    Find a template inside a named REGIONS area.
-
-    Returns:
-        found: bool
-        center_full: (x, y) or None
-        confidence: float
-        match_info: dict or None
-    """
-    template = load_template(template_path)
-
-    if template is None:
-        _write_log(f"TEMPLATE LOAD FAILED: {template_path}")
-        return False, None, 0.0, None
-
-    if region_name not in _VISUAL_REGIONS:
-        _write_log(f"REGION NOT FOUND: {region_name}")
-        return False, None, 0.0, None
-
-    region = _VISUAL_REGIONS[region_name]
-    region_img = crop(img, region)
-
-    if region_img is None:
-        _write_log(f"REGION CROP FAILED: {region_name}")
-        return False, None, 0.0, None
-
-    match = match_template(region_img, template)
-    confidence = match["confidence"]
-
-    x1, y1, _, _ = region
-
-    center_x, center_y = match["center"]
-    top_left_x, top_left_y = match["top_left"]
-    bottom_right_x, bottom_right_y = match["bottom_right"]
-
-    match_info = {
-        "center_full": (x1 + center_x, y1 + center_y),
-        "top_left_full": (x1 + top_left_x, y1 + top_left_y),
-        "bottom_right_full": (x1 + bottom_right_x, y1 + bottom_right_y),
-        "size": match["size"],
-        "confidence": confidence,
-        "template_path": template_path,
-        "region_name": region_name,
-    }
-
-    found = confidence >= threshold
-
-    return found, match_info["center_full"], confidence, match_info
 
 
 def find_template_in_box(img, template_path, region, threshold, label="custom_region"):
@@ -1285,22 +1213,6 @@ def find_storage_anchor(img, anchor_template_path, region, threshold, label="sto
     }
 
 
-def build_stash_last_slot_region(anchor_center, offset_x, offset_y, width, height):
-    if anchor_center is None:
-        return None
-
-    center_x = int(round(anchor_center[0] + offset_x))
-    center_y = int(round(anchor_center[1] + offset_y))
-    half_w = int(round(width / 2))
-    half_h = int(round(height / 2))
-    return (
-        center_x - half_w,
-        center_y - half_h,
-        center_x - half_w + int(width),
-        center_y - half_h + int(height),
-    )
-
-
 def build_storage_grid_slot_regions(
     anchor_center,
     offset_x,
@@ -1341,112 +1253,6 @@ def build_storage_grid_slot_regions(
             })
 
     return slots
-
-
-def save_stash_last_slot_debug_crop(img, region, status, confidence, threshold):
-    if _VISUAL_GET_DEBUG_DIR is None:
-        return None
-
-    debug_dir = _VISUAL_GET_DEBUG_DIR()
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    crop_img = crop(img, region)
-
-    if crop_img is None:
-        return None
-
-    path = debug_dir / "stash_last_slot_debug.png"
-    cv2.imwrite(str(path), crop_img)
-    _write_log(
-        f"Stash last-slot debug crop saved | path={path} | "
-        f"status={status} | confidence={confidence:.2f} | threshold={threshold:.2f}"
-    )
-    return path
-
-
-def save_stash_last_slot_diagnostics(
-    img,
-    region,
-    anchor_center,
-    anchor_match_info,
-    anchor_label,
-    status,
-    confidence,
-    threshold,
-    reason,
-):
-    if _VISUAL_GET_DEBUG_DIR is None:
-        return None, None
-
-    debug_dir = _VISUAL_GET_DEBUG_DIR()
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    crop_img = crop(img, region)
-    crop_path = None
-
-    if crop_img is not None:
-        crop_path = debug_dir / "stash_last_slot_crop.png"
-        cv2.imwrite(str(crop_path), crop_img)
-
-    annotated_path = debug_dir / "stash_last_slot_annotated.png"
-    annotated = img.copy()
-
-    if anchor_match_info is not None:
-        top_left = anchor_match_info.get("top_left_full")
-        bottom_right = anchor_match_info.get("bottom_right_full")
-
-        if top_left is not None and bottom_right is not None:
-            cv2.rectangle(annotated, top_left, bottom_right, (255, 0, 255), 2)
-
-    if anchor_center is not None:
-        anchor_x, anchor_y = int(anchor_center[0]), int(anchor_center[1])
-        cv2.drawMarker(
-            annotated,
-            (anchor_x, anchor_y),
-            (255, 0, 255),
-            markerType=cv2.MARKER_CROSS,
-            markerSize=22,
-            thickness=2,
-        )
-        cv2.putText(
-            annotated,
-            anchor_label or "storage_anchor",
-            (anchor_x + 8, max(18, anchor_y - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 0, 255),
-            2,
-            cv2.LINE_AA,
-        )
-
-    if region is not None:
-        x1, y1, x2, y2 = region
-        color = {
-            "blank": (0, 255, 0),
-            "occupied": (0, 0, 255),
-            "uncertain": (0, 255, 255),
-        }.get(status, (255, 255, 255))
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-        label = (
-            f"49th slot {status} "
-            f"conf={confidence:.2f}/{threshold:.2f}"
-        )
-        cv2.putText(
-            annotated,
-            label,
-            (x1, max(18, y1 - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-
-    cv2.imwrite(str(annotated_path), annotated)
-    _write_log(
-        f"Stash last-slot diagnostics saved | crop={crop_path} | "
-        f"annotated={annotated_path} | status={status} | "
-        f"confidence={confidence:.2f} | threshold={threshold:.2f} | reason={reason}"
-    )
-    return crop_path, annotated_path
 
 
 def save_stash_grid_diagnostics(
@@ -1864,187 +1670,6 @@ def check_stash_grid_space(
             blank_threshold,
             evidence["reason"],
         )
-
-    return evidence
-
-
-def check_stash_last_slot_blank(
-    img,
-    blank_template_path,
-    anchor_template_path,
-    search_region,
-    anchor_threshold,
-    blank_threshold,
-    uncertain_margin,
-    offset_x,
-    offset_y,
-    slot_width,
-    slot_height,
-    save_debug=False,
-    anchor_label="storage_anchor",
-    fallback_anchor_template_path=None,
-    fallback_anchor_label="storage_anchor_fallback",
-):
-    anchor = find_storage_anchor(
-        img,
-        anchor_template_path,
-        search_region,
-        anchor_threshold,
-        label=anchor_label,
-    )
-
-    evidence = {
-        "status": "uncertain",
-        "is_blank": None,
-        "confidence": 0.0,
-        "threshold": blank_threshold,
-        "uncertain_margin": uncertain_margin,
-        "slot_region": None,
-        "anchor": anchor,
-        "debug_crop_path": None,
-        "debug_annotated_path": None,
-        "reason": None,
-    }
-
-    _write_log(
-        f"Stash storage anchor check | label={anchor.get('label')} | "
-        f"found={anchor.get('found')} | "
-        f"center={anchor.get('center')} | confidence={anchor.get('confidence', 0.0):.2f} | "
-        f"threshold={anchor_threshold:.2f} | template={anchor_template_path}"
-    )
-
-    if not anchor["found"] and fallback_anchor_template_path:
-        _write_log(
-            f"Primary stash anchor not found; trying fallback anchor | "
-            f"primary={anchor_template_path} | fallback={fallback_anchor_template_path}"
-        )
-        fallback_anchor = find_storage_anchor(
-            img,
-            fallback_anchor_template_path,
-            search_region,
-            anchor_threshold,
-            label=fallback_anchor_label,
-        )
-        _write_log(
-            f"Fallback stash anchor check | label={fallback_anchor.get('label')} | "
-            f"found={fallback_anchor.get('found')} | "
-            f"center={fallback_anchor.get('center')} | "
-            f"confidence={fallback_anchor.get('confidence', 0.0):.2f} | "
-            f"threshold={anchor_threshold:.2f} | template={fallback_anchor_template_path}"
-        )
-
-        if fallback_anchor["found"]:
-            anchor = fallback_anchor
-            evidence["anchor"] = anchor
-
-    if not anchor["found"]:
-        evidence["reason"] = f"{anchor_label}_not_found"
-        return evidence
-
-    slot_region = build_stash_last_slot_region(
-        anchor["center"],
-        offset_x,
-        offset_y,
-        slot_width,
-        slot_height,
-    )
-    slot_region = clamp_region(img, slot_region)
-    evidence["slot_region"] = slot_region
-    _write_log(
-        f"Stash 49th-slot ROI calculated | anchor_center={anchor.get('center')} | "
-        f"anchor_label={anchor.get('label')} | "
-        f"offset=({offset_x}, {offset_y}) | size=({slot_width}x{slot_height}) | "
-        f"roi={slot_region}"
-    )
-
-    if slot_region is None:
-        evidence["reason"] = "last_slot_region_out_of_bounds"
-        return evidence
-
-    slot_img = crop(img, slot_region)
-
-    if slot_img is None or slot_img.size == 0:
-        evidence["reason"] = "last_slot_crop_failed"
-        return evidence
-
-    blank_template = load_template(blank_template_path)
-    template_h, template_w = blank_template.shape[:2]
-    slot_h, slot_w = slot_img.shape[:2]
-
-    if template_h > slot_h or template_w > slot_w:
-        evidence["reason"] = (
-            f"blank_template_larger_than_slot_roi:"
-            f"template=({template_w}x{template_h}) slot=({slot_w}x{slot_h})"
-        )
-        evidence["debug_crop_path"] = save_stash_last_slot_debug_crop(
-            img,
-            slot_region,
-            evidence["status"],
-            evidence["confidence"],
-            blank_threshold,
-        )
-        if save_debug:
-            crop_path, annotated_path = save_stash_last_slot_diagnostics(
-                img,
-                slot_region,
-                anchor.get("center"),
-                anchor.get("match_info"),
-                anchor.get("label"),
-                evidence["status"],
-                evidence["confidence"],
-                blank_threshold,
-                evidence["reason"],
-            )
-            evidence["debug_crop_path"] = crop_path or evidence["debug_crop_path"]
-            evidence["debug_annotated_path"] = annotated_path
-        return evidence
-
-    match = match_template(slot_img, blank_template)
-    confidence = match["confidence"]
-    evidence["confidence"] = confidence
-    occupied_threshold = max(0.0, blank_threshold - uncertain_margin)
-
-    if confidence >= blank_threshold:
-        evidence["status"] = "blank"
-        evidence["is_blank"] = True
-        evidence["reason"] = "blank_template_matched_last_slot_roi"
-    elif confidence <= occupied_threshold:
-        evidence["status"] = "occupied"
-        evidence["is_blank"] = False
-        evidence["reason"] = "blank_template_did_not_match_last_slot_roi"
-    else:
-        evidence["status"] = "uncertain"
-        evidence["is_blank"] = None
-        evidence["reason"] = "blank_match_in_uncertain_band"
-        evidence["debug_crop_path"] = save_stash_last_slot_debug_crop(
-            img,
-            slot_region,
-            evidence["status"],
-            confidence,
-            blank_threshold,
-        )
-
-    _write_log(
-        f"Stash 49th-slot blank check | roi={slot_region} | "
-        f"blank_confidence={confidence:.2f} | blank_threshold={blank_threshold:.2f} | "
-        f"uncertain_margin={uncertain_margin:.2f} | status={evidence['status']} | "
-        f"reason={evidence['reason']}"
-    )
-
-    if save_debug:
-        crop_path, annotated_path = save_stash_last_slot_diagnostics(
-            img,
-            slot_region,
-            anchor.get("center"),
-            anchor.get("match_info"),
-            anchor.get("label"),
-            evidence["status"],
-            confidence,
-            blank_threshold,
-            evidence["reason"],
-        )
-        evidence["debug_crop_path"] = crop_path or evidence["debug_crop_path"]
-        evidence["debug_annotated_path"] = annotated_path
 
     return evidence
 
@@ -2530,13 +2155,6 @@ def find_best_difficulty_anchor(img):
             best_info = match_info
 
     return best_name, best_center, best_confidence, best_info
-
-
-def chapter_order_index(chapter):
-    try:
-        return _NAV_CHAPTER_ORDER.index(chapter)
-    except ValueError:
-        return None
 
 
 def unique_points_by_x(points, tolerance=None):

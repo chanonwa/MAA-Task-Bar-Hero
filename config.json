@@ -1,5 +1,4 @@
 {
-    "ui_scale": 1.0,
     "default_no_chest_retries": 4,
     "default_max_trials_if_no_chest": 5,
     "post_clear_reward_wait_seconds": 3.0,
@@ -33,10 +32,6 @@
     "orphan_blue_chest_confirm_cycles": 2,
     "orphan_blue_chest_near_threshold_margin": 0.03,
     "assume_mailbox_after_max_trials": true,
-    "skip_level_if_already_selected": true,
-    "input_control_mode": "normal",
-    "force_game_window_before_action": false,
-    "max_input_retries": 3,
     "thresholds": {
         "chest_match": 0.8,
         "chapter_tab_candidate": 0.8,
@@ -82,10 +77,6 @@
         "stash_3": "templates/general/stash_3_selected.png",
         "stash_4": "templates/general/stash_4_selected.png"
     },
-    "stash_last_slot_anchor_offset_x": -9,
-    "stash_last_slot_anchor_offset_y": -55,
-    "stash_last_slot_width": 38,
-    "stash_last_slot_height": 38,
     "storage_grid_anchor_offset_x": -249,
     "storage_grid_anchor_offset_y": -295,
     "storage_grid_slot_width": 38,

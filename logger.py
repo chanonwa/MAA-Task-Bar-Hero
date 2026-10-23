@@ -66,11 +66,4 @@ def timestamp():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def append_log(log_file, message):
-    line = f"[{timestamp()}] {message}"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
-    safe_print(line)
-
-
 configure_console_encoding()

@@ -116,29 +116,8 @@ def route_progression_key(difficulty, chapter, level):
     )
 
 
-def get_chest_tier_start_route(chest_tier):
-    for breakpoint in CHEST_TIER_BREAKPOINTS:
-        if breakpoint["chest_tier"] == chest_tier:
-            return {
-                "difficulty": breakpoint["difficulty"],
-                "chapter": breakpoint["chapter"],
-                "level": breakpoint["level"],
-            }
-
-    return None
 
 
-def is_route_at_or_above_chest_tier(difficulty, chapter, level, chest_tier):
-    start_route = get_chest_tier_start_route(chest_tier)
-
-    if start_route is None:
-        return False
-
-    return route_progression_key(difficulty, chapter, level) >= route_progression_key(
-        start_route["difficulty"],
-        start_route["chapter"],
-        start_route["level"],
-    )
 
 
 def get_chest_tier_for_route(difficulty, chapter, level):
