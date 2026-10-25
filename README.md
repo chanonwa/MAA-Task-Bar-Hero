@@ -1,12 +1,12 @@
 # MAA TaskBar Hero
 
-A visual automation tool for the Steam game **TaskBarHero**. It reads the game screen with screenshots and template matching, then plays your farming route with normal mouse and keyboard input. It runs the route, opens chest drops, stashes loot, and fights act bosses with your soulstones.
+A visual automation tool for the Steam game **TaskBarHero**. It reads the game screen with screenshots and template matching, then plays your farming route with normal mouse and keyboard input. It runs the route, opens chest drops, stashes loot, fights act bosses with your soulstones, and synthesizes items in the Cube when your inventory is full.
 
 This is [chanonwa](https://github.com/chanonwa)'s extended version of [Marcus-Xu-04/MAA-Task-Bar-Hero](https://github.com/Marcus-Xu-04/MAA-Task-Bar-Hero), the original project by Marcus-Xu-04. It is maintained separately: changes here are not sent to the original, and updates from it are not pulled in.
 
 ## What's new
 
-Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases)**; the latest is [1.4](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases/tag/v1.4).
+Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases)**; the latest is [1.5](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases/tag/v1.5).
 
 ## Download and run
 
@@ -23,7 +23,7 @@ In the GUI, add stages to the farming cycle, tick the options you want, and pres
 ## Before you start
 
 * Set the game language to **English** and the game zoom to **1x / 100%**.
-* Keep the STASH, HERO, and PORTAL windows open.
+* Keep the STASH, HERO, and PORTAL windows open, with the HERO panel on its **Inventory** tab.
 * The bot uses your real mouse, so don't use the mouse while it runs. Press **Ctrl + Shift + F12** to stop it.
 
 ## Troubleshooting
@@ -32,9 +32,11 @@ In the GUI, add stages to the farming cycle, tick the options you want, and pres
 
 **"MAA Task Bar Hero is already open."** Only one copy can run at a time, so two copies can't fight over the game. Use the window that's already open; the message brings it to the front.
 
-**The bot doesn't click the game.** Turn off *Background input mode*. Foreground mouse mode is more reliable.
+**The bot doesn't click the game.** Keep *Background input mode* off. The game ignores clicks that don't come from the real mouse.
 
 **The bot can't find a stage.** Check the zoom is 1x and the PORTAL window is open. A stage marked `[Unavailable]` is missing its template in `templates/levels/`.
+
+**Cube synthesis doesn't run.** It runs only when all 21 backpack slots are full and *Cube synthesis when the inventory is full* is ticked. Items at or above the *Synthesize up to* grade are locked first and never combined. To protect any other item, lock it yourself with ALT + left click.
 
 **Adding templates.** A stage needs `templates/levels/level_<act>_<stage>.png`. A difficulty needs `templates/difficulty/anchor_difficulty_<name>.png`. Soulstones of all four difficulties are recognized by their icon (`soulstone_icon_templates`) and tooltip title (`soulstone_title_templates`) in `config.json`. The bot finds them in the stash and the backpack.
 
