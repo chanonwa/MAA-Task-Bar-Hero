@@ -24,9 +24,11 @@ from config import (
     CONFIG_FILE_NAME,
     EMERGENCY_HOTKEY_MODIFIERS,
     EMERGENCY_STOP_EXIT_CODE,
+    SYNTHESIS_CAP_GRADES,
     get_base_dir,
     get_config,
     get_emergency_hotkey,
+    get_synthesis_cap_grade,
 )
 from debug_files import (
     clear_generated_debug_files,
@@ -222,6 +224,10 @@ class RoutePlannerApp:
             value=config_bool_value("act_boss_use_all_soulstones", False)
         )
         self.boss_runs_var = tk.StringVar(value=str(get_config().get("act_boss_max_attempts", 1)))
+        self.auto_synthesis_var = tk.BooleanVar(
+            value=config_bool_value("auto_synthesis_enabled", False)
+        )
+        self.synthesis_cap_var = tk.StringVar(value=get_synthesis_cap_grade().title())
         self.repeat_same_level_var = tk.BooleanVar(
             value=config_bool_value("repeat_same_level_after_blue_chest", False)
         )
@@ -409,6 +415,26 @@ class RoutePlannerApp:
         self.boss_runs_entry.grid(row=0, column=2, sticky="w")
         self.update_boss_run_count_state()
 
+        tk.Checkbutton(
+            options,
+            text="Cube synthesis when the inventory is full",
+            variable=self.auto_synthesis_var,
+            command=self.update_synthesis_cap_state,
+        ).grid(row=len(option_columns[0]) + 1, column=0, sticky="w", padx=(0, 12), pady=2)
+
+        # Its grade cap sits beside it, in the right column's free row.
+        synthesis_options = tk.Frame(options)
+        synthesis_options.grid(row=len(option_columns[0]) + 1, column=1, sticky="w", pady=2)
+        tk.Label(synthesis_options, text="Synthesize up to:").grid(row=0, column=0, sticky="w", padx=(4, 4))
+        self.synthesis_cap_menu = tk.OptionMenu(
+            synthesis_options,
+            self.synthesis_cap_var,
+            *[grade.title() for grade in SYNTHESIS_CAP_GRADES],
+        )
+        self.synthesis_cap_menu.configure(width=9, pady=0, highlightthickness=0)
+        self.synthesis_cap_menu.grid(row=0, column=1, sticky="w")
+        self.update_synthesis_cap_state()
+
         tk.Label(
             control_frame,
             text=f"Improvement by: Chanon Wa · Build v{APP_VERSION}",
@@ -432,8 +458,8 @@ class RoutePlannerApp:
 
         # Open as narrow as the layout allows; the window may not shrink below that.
         root.update_idletasks()
-        root.minsize(root.winfo_reqwidth(), 548)
-        root.geometry(f"{root.winfo_reqwidth()}x628")
+        root.minsize(root.winfo_reqwidth(), 577)
+        root.geometry(f"{root.winfo_reqwidth()}x657")
 
         self.populate_available_levels()
         self.load_existing_plan(silent=True)
@@ -717,6 +743,10 @@ class RoutePlannerApp:
 
         return retries
 
+    def update_synthesis_cap_state(self):
+        # The grade cap only matters while Cube synthesis is on.
+        self.synthesis_cap_menu.configure(state="normal" if self.auto_synthesis_var.get() else "disabled")
+
     def update_boss_run_count_state(self):
         # With "Use all soulstones" ticked the run count does not apply.
         self.boss_runs_entry.configure(state="disabled" if self.boss_use_all_var.get() else "normal")
@@ -760,6 +790,8 @@ class RoutePlannerApp:
         config["has_rune_of_opening"] = bool(self.rune_of_opening_var.get())
         config["use_soulstones_for_act_bosses"] = bool(self.use_soulstones_var.get())
         config["act_boss_use_all_soulstones"] = bool(self.boss_use_all_var.get())
+        config["auto_synthesis_enabled"] = bool(self.auto_synthesis_var.get())
+        config["auto_synthesis_up_to_grade"] = get_synthesis_cap_grade(self.synthesis_cap_var.get())
 
         try:
             config["act_boss_max_attempts"] = max(1, int(self.boss_runs_var.get().strip()))
@@ -969,6 +1001,8 @@ class RoutePlannerApp:
             env["MAATBH_USE_SOULSTONES"] = "1" if self.use_soulstones_var.get() else "0"
             env["MAATBH_ACT_BOSS_USE_ALL"] = "1" if self.boss_use_all_var.get() else "0"
             env["MAATBH_ACT_BOSS_MAX_ATTEMPTS"] = self.boss_runs_var.get().strip()
+            env["MAATBH_AUTO_SYNTHESIS"] = "1" if self.auto_synthesis_var.get() else "0"
+            env["MAATBH_AUTO_SYNTHESIS_UP_TO"] = get_synthesis_cap_grade(self.synthesis_cap_var.get())
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             self.write_bot_console_log(f"=== Input mode: {input_mode} ===\n")
@@ -991,6 +1025,12 @@ class RoutePlannerApp:
             self.write_bot_console_log(
                 "=== Boss runs per blue chest: "
                 f"{'all soulstones' if self.boss_use_all_var.get() else self.boss_runs_var.get().strip()} ===\n"
+            )
+            self.write_bot_console_log(
+                f"=== Cube synthesis when the inventory is full: {'on' if self.auto_synthesis_var.get() else 'off'} ===\n"
+            )
+            self.write_bot_console_log(
+                f"=== Synthesize up to: {get_synthesis_cap_grade(self.synthesis_cap_var.get()).title()} ===\n"
             )
             bot_command = (
                 [sys.executable, "--bot"]

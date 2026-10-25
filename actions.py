@@ -961,6 +961,38 @@ class InputController:
         self.rest_mouse(hwnd, reason=f"after_click:{label}")
         return True
 
+    def alt_click_window_point(self, hwnd, local_x, local_y, label=""):
+        """
+        ALT + left click a point (the game's item lock toggle). Foreground input
+        only; ALT is always released, even when the click fails.
+        """
+        if self.use_background_input:
+            self.write_log(f"ALT click skipped | label={label} | reason=background_input")
+            return False
+
+        _client_x, _client_y, screen_x, screen_y, _scaling = self.screenshot_local_to_click_coordinates(
+            hwnd,
+            local_x,
+            local_y,
+            label=label,
+        )
+        self.focus_window(hwnd)
+
+        if not self.hover_screen_point(screen_x, screen_y, label=label):
+            return False
+
+        win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+
+        try:
+            time.sleep(0.05)
+            clicked = self.safe_pyautogui_click(screen_x, screen_y, label=label)
+            time.sleep(0.05)
+        finally:
+            win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+        time.sleep(0.2)
+        return clicked
+
     def scroll_map(self, hwnd, direction, repeat, focus, resolve_legacy_focus):
         local_x = focus["local_x"]
         local_y = focus["local_y"]

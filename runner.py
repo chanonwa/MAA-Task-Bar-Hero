@@ -6,6 +6,7 @@
 import time
 import winsound
 import cv2
+import numpy as np
 from vision import (
     find_window_by_title_keyword,
     capture_window,
@@ -101,10 +102,12 @@ from config import (
     CONFIG_FILE_NAME,
     EMERGENCY_HOTKEY_MODIFIERS,
     EMERGENCY_STOP_EXIT_CODE,
+    ITEM_GRADES,
     emit_config_load_messages,
     get_base_dir,
     get_config,
     get_emergency_hotkey,
+    get_synthesis_cap_grade,
     get_effective_thresholds,
     get_recognition_mode,
     get_threshold,
@@ -588,6 +591,50 @@ HERO_TITLE_TEMPLATE_PATH = "templates/general/hero_title.png"
 BACKPACK_GRID_OFFSET_FROM_HERO_TITLE = (-118, 208)
 BACKPACK_GRID_ROWS = 3
 BACKPACK_GRID_COLS = 7
+
+# Auto synthesis in the Cube, run when the inventory (backpack) is full.
+AUTO_SYNTHESIS_ENABLED = env_flag("MAATBH_AUTO_SYNTHESIS", config_bool("auto_synthesis_enabled", False))
+AUTO_SYNTHESIS_CATEGORIES = ("equipment", "materials")
+# The Cube's level range and Fixed Level only apply to equipment and accessories; with
+# materials selected they are greyed out.
+LEVEL_RANGE_CATEGORIES = ("equipment",)
+AUTO_SYNTHESIS_MAX_ROUNDS = 30
+# "Synthesize up to" grade: results reach at most this grade, and items of this grade or
+# higher are locked so Auto Fill skips them, and are never synthesized.
+LOCKED_FROM_GRADE = get_synthesis_cap_grade(os.environ.get("MAATBH_AUTO_SYNTHESIS_UP_TO"))
+CUBE_TITLE_TEMPLATE_PATH = "templates/general/cube_title.png"
+CUBE_MODE_SYNTHESIS_TEMPLATE_PATH = "templates/general/cube_mode_synthesis.png"
+CUBE_LEVEL_80_90_TEMPLATE_PATH = "templates/general/cube_level_80_90.png"
+CUBE_FILL_ICON_TEMPLATE_PATHS = {
+    "equipment": "templates/general/cube_fill_equipment.png",
+    "materials": "templates/general/cube_fill_materials.png",
+}
+ITEM_LOCK_BADGE_TEMPLATE_PATH = "templates/general/item_lock_badge.png"
+ITEM_LOCK_BADGE_MASK_PATH = "templates/general/item_lock_badge_mask.png"
+CUBE_MATCH_THRESHOLD = 0.9
+ITEM_LOCK_MATCH_THRESHOLD = 0.8
+# Cube controls relative to the CUBE title center (the panel replaces PORTAL on the right).
+CUBE_OFFSETS = {
+    "mode_dropdown": (-58, 43),
+    "mode_synthesis": (-53, 69),
+    "level_dropdown": (80, 43),
+    "level_80_90": (83, 281),
+    "auto_fill": (-63, 266),
+    "auto_fill_menu": (3, 266),
+    "auto_fill_icon": (-101, 267),
+    "synthesize": (72, 266),
+    "return_items": (-75, 214),
+    "equipment": (-51, 298),
+    "materials": (-51, 325),
+    "include_stash_box": (-103, 302),
+    "fixed_level_box": (39, 302),
+}
+CUBE_GRID_COLUMNS = (-42, -2, 39)
+CUBE_GRID_ROWS = (127, 168, 208)
+# A synthesis result appears in the middle cell of the 3x3 grid.
+CUBE_RESULT_CELL = 4
+# Round buttons in the HERO panel that switch the right-hand panel, relative to the HERO title.
+HERO_PANEL_BUTTON_OFFSETS = {"cube": (58, 376), "portal": (113, 376)}
 SOULSTONE_MATCH_THRESHOLD = config_non_negative_float("soulstone_match_threshold", 0.85)
 SOULSTONE_TOOLTIP_WAIT_SECONDS = config_non_negative_float("soulstone_tooltip_wait_seconds", 1.5)
 SOULSTONE_SCAN_MAX_AGE_SECONDS = 60
@@ -1375,6 +1422,8 @@ def log_recognition_profile_startup():
         f"act_boss_fight_timeout={ACT_BOSS_FIGHT_TIMEOUT_SECONDS:.0f}s | "
         f"act_boss_max_attempts={ACT_BOSS_MAX_ATTEMPTS} | "
         f"act_boss_use_all_soulstones={ACT_BOSS_USE_ALL_SOULSTONES} | "
+        f"auto_synthesis_enabled={AUTO_SYNTHESIS_ENABLED} | "
+        f"auto_synthesis_up_to={LOCKED_FROM_GRADE} | "
         f"non_blue_box_click_cooldown={NON_BLUE_BOX_CLICK_COOLDOWN_SECONDS:.2f}s | "
         f"recover_orphan_blue_chest_before_boss={RECOVER_ORPHAN_BLUE_CHEST_BEFORE_BOSS} | "
         f"orphan_blue_chest_confirm_cycles={ORPHAN_BLUE_CHEST_CONFIRM_CYCLES} | "
@@ -1434,6 +1483,14 @@ def get_startup_template_specs():
     add_template_spec(specs, seen_paths, "general:stash_sort", STASH_SORT_TEMPLATE)
     add_template_spec(specs, seen_paths, "general:stash_blank_slot", STASH_BLANK_TEMPLATE)
     add_template_spec(specs, seen_paths, "general:mouse_rest_hero_title", MOUSE_REST_TEMPLATE_PATH)
+    for name, path in (
+        ("cube_title", CUBE_TITLE_TEMPLATE_PATH),
+        ("cube_mode_synthesis", CUBE_MODE_SYNTHESIS_TEMPLATE_PATH),
+        ("cube_level_80_90", CUBE_LEVEL_80_90_TEMPLATE_PATH),
+        ("item_lock_badge", ITEM_LOCK_BADGE_TEMPLATE_PATH),
+        ("item_lock_badge_mask", ITEM_LOCK_BADGE_MASK_PATH),
+    ) + tuple((f"cube_fill_{category}", path) for category, path in CUBE_FILL_ICON_TEMPLATE_PATHS.items()):
+        add_template_spec(specs, seen_paths, f"general:{name}", path)
 
     if isinstance(STASH_TAB_TEMPLATES, dict):
         for stash_name, path in STASH_TAB_TEMPLATES.items():
@@ -2999,11 +3056,18 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
     return len(stacked_pages) == len(pages)
 
 
-def find_soulstone_slots(screenshot):
-    """
-    Return the screenshot centers of soulstone icons on the open stash tab, using
-    the same 7x7 grid geometry as the stash space check (anchored on the sort button).
-    """
+def item_grid_centers(first_center, rows, cols):
+    pitch_x = STORAGE_GRID_SLOT_WIDTH + STORAGE_GRID_SLOT_GAP_X
+    pitch_y = STORAGE_GRID_SLOT_HEIGHT + STORAGE_GRID_SLOT_GAP_Y
+    return [
+        (first_center[0] + col * pitch_x, first_center[1] + row * pitch_y)
+        for row in range(rows)
+        for col in range(cols)
+    ]
+
+
+def stash_grid_centers(screenshot):
+    """Slot centers of the open stash tab (7x7, anchored on the sort button)."""
     sort_button = find_stash_sort_button(screenshot)
 
     if not sort_button.get("found") or sort_button.get("center") is None:
@@ -3013,67 +3077,64 @@ def find_soulstone_slots(screenshot):
         sort_button["center"][0] + STORAGE_GRID_ANCHOR_OFFSET_X,
         sort_button["center"][1] + STORAGE_GRID_ANCHOR_OFFSET_Y,
     )
-    return find_soulstone_slots_in_grid(screenshot, first_center, STORAGE_GRID_ROWS, STORAGE_GRID_COLS)
+    return item_grid_centers(first_center, STORAGE_GRID_ROWS, STORAGE_GRID_COLS)
 
 
-def find_backpack_soulstone_slots(screenshot):
-    """Soulstone icons in the backpack grid, anchored on the HERO title above it."""
+def find_template_center(screenshot, template_path, threshold):
     try:
-        match = match_template(screenshot, load_template(HERO_TITLE_TEMPLATE_PATH))
+        match = match_template(screenshot, load_template(template_path))
     except FileNotFoundError:
-        return []
+        return None
 
-    if match["confidence"] < MOUSE_REST_MATCH_THRESHOLD:
+    return match["center"] if match["confidence"] >= threshold else None
+
+
+def backpack_grid_centers(screenshot):
+    """Slot centers of the backpack (7x3), anchored on the HERO title above it."""
+    hero = find_template_center(screenshot, HERO_TITLE_TEMPLATE_PATH, MOUSE_REST_MATCH_THRESHOLD)
+
+    if hero is None:
         return []
 
     first_center = (
-        match["center"][0] + BACKPACK_GRID_OFFSET_FROM_HERO_TITLE[0],
-        match["center"][1] + BACKPACK_GRID_OFFSET_FROM_HERO_TITLE[1],
+        hero[0] + BACKPACK_GRID_OFFSET_FROM_HERO_TITLE[0],
+        hero[1] + BACKPACK_GRID_OFFSET_FROM_HERO_TITLE[1],
     )
-    return find_soulstone_slots_in_grid(screenshot, first_center, BACKPACK_GRID_ROWS, BACKPACK_GRID_COLS)
+    return item_grid_centers(first_center, BACKPACK_GRID_ROWS, BACKPACK_GRID_COLS)
 
 
-def find_soulstone_slots_in_grid(screenshot, first_center, rows, cols):
-    """Centers of the slots in an item grid that hold a soulstone icon."""
-    icon_templates = []
+def load_soulstone_icon_templates():
+    templates = []
 
     for path in SOULSTONE_ICON_TEMPLATES if isinstance(SOULSTONE_ICON_TEMPLATES, list) else []:
         try:
-            template = load_template(path)
+            templates.append(load_template(path))
         except FileNotFoundError:
             continue
 
-        if template is not None:
-            icon_templates.append(template)
+    return templates
 
-    if not icon_templates:
-        return []
 
-    first_x, first_y = first_center
-    pitch_x = STORAGE_GRID_SLOT_WIDTH + STORAGE_GRID_SLOT_GAP_X
-    pitch_y = STORAGE_GRID_SLOT_HEIGHT + STORAGE_GRID_SLOT_GAP_Y
+def slot_has_soulstone(screenshot, center, icon_templates):
     half = max(STORAGE_GRID_SLOT_WIDTH, STORAGE_GRID_SLOT_HEIGHT) // 2 + 2
-    slots = []
+    slot_img = crop(screenshot, (center[0] - half, center[1] - half, center[0] + half, center[1] + half))
 
-    for row in range(rows):
-        for col in range(cols):
-            center_x = first_x + col * pitch_x
-            center_y = first_y + row * pitch_y
-            slot_img = crop(
-                screenshot,
-                (center_x - half, center_y - half, center_x + half, center_y + half),
-            )
+    return slot_img is not None and any(
+        match_template(slot_img, template)["confidence"] >= SOULSTONE_MATCH_THRESHOLD
+        for template in icon_templates
+    )
 
-            if slot_img is None:
-                continue
 
-            if any(
-                match_template(slot_img, template)["confidence"] >= SOULSTONE_MATCH_THRESHOLD
-                for template in icon_templates
-            ):
-                slots.append((center_x, center_y))
+def find_soulstone_slots(screenshot):
+    """Centers of the soulstones on the open stash tab."""
+    icon_templates = load_soulstone_icon_templates()
+    return [c for c in stash_grid_centers(screenshot) if slot_has_soulstone(screenshot, c, icon_templates)]
 
-    return slots
+
+def find_backpack_soulstone_slots(screenshot):
+    """Centers of the soulstones in the backpack."""
+    icon_templates = load_soulstone_icon_templates()
+    return [c for c in backpack_grid_centers(screenshot) if slot_has_soulstone(screenshot, c, icon_templates)]
 
 
 def read_soulstone_difficulty(slot_center, context):
@@ -3528,6 +3589,349 @@ def show_current_stage_in_portal(expected_route=None):
     return None
 
 
+def item_grade(screenshot, center):
+    """
+    Grade of the item in an inventory or Cube slot, or None for an empty slot. The
+    slot's background colour gives the grade; a dark background with item art is Common.
+    """
+    x, y = center
+    inner = crop(screenshot, (x - 12, y - 12, x + 12, y + 12))
+
+    if inner is None or inner.size == 0:
+        return None
+
+    gray = cv2.cvtColor(inner, cv2.COLOR_BGR2GRAY)
+
+    if float(gray.std()) <= 12 and int(gray.max()) <= 110:
+        return None
+
+    corner = crop(screenshot, (x - 16, y - 16, x - 12, y - 12))
+    b, g, r = np.median(corner.reshape(-1, 3), axis=0)
+    hue, saturation, value = cv2.cvtColor(np.uint8([[[b, g, r]]]), cv2.COLOR_BGR2HSV)[0, 0].tolist()
+
+    if value > 190 and 85 <= hue < 110:
+        return "celestial"
+    if value < 45 or saturation < 50:
+        return "common"
+    if 35 <= hue < 85:
+        return "uncommon"
+    if 85 <= hue < 125:
+        return "rare"
+    if 125 <= hue < 160:
+        return "arcana"
+    if 160 <= hue < 176:
+        return "beyond"
+    if 8 <= hue < 30:
+        return "legendary"
+    return "immortal"
+
+
+def grade_is_protected(grade):
+    return grade is not None and ITEM_GRADES.index(grade) >= ITEM_GRADES.index(LOCKED_FROM_GRADE)
+
+
+def item_is_locked(screenshot, center):
+    """True when the slot shows the padlock badge (top-right corner)."""
+    x, y = center
+    region = crop(screenshot, (x - 4, y - 20, x + 22, y + 2))
+
+    try:
+        badge = load_template(ITEM_LOCK_BADGE_TEMPLATE_PATH)
+        mask = cv2.cvtColor(load_template(ITEM_LOCK_BADGE_MASK_PATH), cv2.COLOR_BGR2GRAY)
+    except FileNotFoundError:
+        return False
+
+    if region is None or region.shape[0] < badge.shape[0] or region.shape[1] < badge.shape[1]:
+        return False
+
+    result = cv2.matchTemplate(region, badge, cv2.TM_CCOEFF_NORMED, mask=mask)
+    return float(np.nan_to_num(result, nan=0, posinf=0, neginf=0).max()) >= ITEM_LOCK_MATCH_THRESHOLD
+
+
+def backpack_is_full(screenshot):
+    centers = backpack_grid_centers(screenshot)
+    return bool(centers) and all(item_grade(screenshot, c) is not None for c in centers)
+
+
+def lock_protected_items_in_view(location, find_centers):
+    """
+    ALT+click every unlocked item of LOCKED_FROM_GRADE or higher in one grid, so Cube
+    Auto Fill skips it. Soulstones are left alone (a locked one may not be usable).
+    """
+    screenshot = capture_window(GAME_HWND)
+    icon_templates = load_soulstone_icon_templates()
+    targets = [
+        center for center in find_centers(screenshot)
+        if grade_is_protected(item_grade(screenshot, center))
+        and not item_is_locked(screenshot, center)
+        and not slot_has_soulstone(screenshot, center, icon_templates)
+    ]
+
+    for center in targets:
+        input_controller.alt_click_window_point(GAME_HWND, center[0], center[1], label=f"lock_item:{location}")
+        # Close the item's tooltip before the next click; it can cover other slots.
+        input_controller.rest_mouse(GAME_HWND, reason=f"lock_item_done:{location}")
+
+    if targets:
+        screenshot = capture_window(GAME_HWND)
+        still_unlocked = [c for c in targets if not item_is_locked(screenshot, c)]
+        write_log(
+            f"Locked items | location={location} | locked={len(targets) - len(still_unlocked)} | "
+            f"failed={still_unlocked or 'none'}"
+        )
+
+    return len(targets)
+
+
+def lock_protected_items():
+    """Lock Arcana-or-higher items on stash tabs 1-4 and in the backpack."""
+    for stash_name in get_stash_stack_pages():
+        if not click_stash_page_tab(GAME_HWND, capture_window(GAME_HWND), stash_name):
+            continue
+
+        time.sleep(STASH_SWITCH_WAIT_SECONDS)
+        lock_protected_items_in_view(stash_name, stash_grid_centers)
+
+    lock_protected_items_in_view("backpack", backpack_grid_centers)
+
+
+def right_panel_center(screenshot, panel):
+    """Center of the CUBE title, or of the PORTAL difficulty dropdown, when that panel shows."""
+    if panel == "cube":
+        return find_template_center(screenshot, CUBE_TITLE_TEMPLATE_PATH, CUBE_MATCH_THRESHOLD)
+
+    _name, anchor, confidence, _info = find_best_difficulty_anchor(screenshot)
+    return anchor if confidence >= DIFFICULTY_MATCH_THRESHOLD else None
+
+
+def switch_right_panel(panel):
+    """Show the Cube or PORTAL on the right with the HERO panel's round buttons."""
+    for attempt in (1, 2):
+        screenshot = capture_window(GAME_HWND)
+        center = right_panel_center(screenshot, panel)
+
+        if center is not None:
+            return center
+
+        hero = find_template_center(screenshot, HERO_TITLE_TEMPLATE_PATH, MOUSE_REST_MATCH_THRESHOLD)
+
+        if hero is None:
+            write_log(f"Panel switch failed: HERO panel not found | panel={panel}")
+            return None
+
+        # The first click on an inactive game window may only activate it, hence the retry.
+        dx, dy = HERO_PANEL_BUTTON_OFFSETS[panel]
+        click_window_point(GAME_HWND, hero[0] + dx, hero[1] + dy, label=f"open_{panel}_panel_{attempt}")
+        time.sleep(1.0)
+
+    center = right_panel_center(capture_window(GAME_HWND), panel)
+
+    if center is None:
+        write_log(f"Panel switch failed | panel={panel}")
+
+    return center
+
+
+def cube_point(cube, name):
+    dx, dy = CUBE_OFFSETS[name]
+    return cube[0] + dx, cube[1] + dy
+
+
+def cube_click(cube, name):
+    x, y = cube_point(cube, name)
+    return click_window_point(GAME_HWND, x, y, label=f"cube_{name}")
+
+
+def cube_shows(screenshot, cube, template_path, near):
+    """True when a label or icon template shows near one of the Cube's controls."""
+    x, y = cube_point(cube, near)
+    region = crop(screenshot, (x - 50, y - 16, x + 50, y + 16))
+
+    try:
+        template = load_template(template_path)
+    except FileNotFoundError:
+        return False
+
+    if region is None or region.shape[0] < template.shape[0] or region.shape[1] < template.shape[1]:
+        return False
+
+    return match_template(region, template)["confidence"] >= CUBE_MATCH_THRESHOLD
+
+
+def cube_box_ticked(screenshot, cube, name):
+    x, y = cube_point(cube, name)
+    box = crop(screenshot, (x - 9, y - 9, x + 9, y + 9))
+
+    if box is None:
+        return False
+
+    b, g, r = box[..., 0].astype(int), box[..., 1].astype(int), box[..., 2].astype(int)
+    return int(((g > 150) & (g - r > 60) & (g - b > 60)).sum()) > 12
+
+
+def wait_for_cube_label(cube, template_path, near, timeout=2.0):
+    """Re-check a Cube label until it shows; it fades in after the panel opens or a pick."""
+    started = time.time()
+
+    while True:
+        screenshot = capture_window(GAME_HWND)
+
+        if cube_shows(screenshot, cube, template_path, near):
+            return True, screenshot
+
+        if time.time() - started >= timeout:
+            return False, screenshot
+
+        time.sleep(0.25)
+
+
+def choose_cube_option(cube, label_path, dropdown, option):
+    """Pick a dropdown option unless its label already shows; True once it shows."""
+    if wait_for_cube_label(cube, label_path, dropdown)[0]:
+        return True
+
+    cube_click(cube, dropdown)
+    time.sleep(0.6)
+    cube_click(cube, option)
+    shown, screenshot = wait_for_cube_label(cube, label_path, dropdown)
+
+    if not shown:
+        cv2.imwrite(os.path.join(get_debug_dir(), "cube_setup_failed.png"), screenshot)
+        write_log(f"Cube setup failed | setting={option} | saved=cube_setup_failed.png")
+
+    return shown
+
+
+def tick_cube_box(cube, box):
+    if cube_box_ticked(capture_window(GAME_HWND), cube, box):
+        return True
+
+    cube_click(cube, box)
+    time.sleep(0.5)
+
+    if not cube_box_ticked(capture_window(GAME_HWND), cube, box):
+        write_log(f"Cube setup failed | could not tick {box}")
+        return False
+
+    return True
+
+
+def prepare_cube(cube):
+    """Synthesis mode with Include Stash Items ticked."""
+    return choose_cube_option(
+        cube, CUBE_MODE_SYNTHESIS_TEMPLATE_PATH, "mode_dropdown", "mode_synthesis"
+    ) and tick_cube_box(cube, "include_stash_box")
+
+
+def read_cube_grid(screenshot, cube):
+    return [
+        item_grade(screenshot, (cube[0] + dx, cube[1] + dy))
+        for dy in CUBE_GRID_ROWS
+        for dx in CUBE_GRID_COLUMNS
+    ]
+
+
+def synthesize_category(cube, category):
+    """
+    Auto Fill one category and synthesize while it fills 9 items of one grade below
+    LOCKED_FROM_GRADE. Anything else is returned to the inventory unsynthesized.
+    """
+    cube_click(cube, "auto_fill_menu")
+    time.sleep(0.6)
+    cube_click(cube, category)
+    time.sleep(0.6)
+
+    if not cube_shows(capture_window(GAME_HWND), cube, CUBE_FILL_ICON_TEMPLATE_PATHS[category], "auto_fill_icon"):
+        write_log(f"Cube synthesis skipped: Auto Fill category not selected | category={category}")
+        return 0
+
+    # The level range and Fixed Level are greyed out unless equipment is selected.
+    if category in LEVEL_RANGE_CATEGORIES and not (
+        choose_cube_option(cube, CUBE_LEVEL_80_90_TEMPLATE_PATH, "level_dropdown", "level_80_90")
+        and tick_cube_box(cube, "fixed_level_box")
+    ):
+        return 0
+
+    synthesized = 0
+
+    for _ in range(AUTO_SYNTHESIS_MAX_ROUNDS):
+        cube_click(cube, "auto_fill")
+        time.sleep(1.0)
+        filled = [grade for grade in read_cube_grid(capture_window(GAME_HWND), cube) if grade]
+
+        if len(filled) == 9 and len(set(filled)) == 1 and not grade_is_protected(filled[0]):
+            cube_click(cube, "synthesize")
+            time.sleep(1.5)
+            screenshot = capture_window(GAME_HWND)
+            grid = read_cube_grid(screenshot, cube)
+            result = grid[CUBE_RESULT_CELL]
+
+            # A finished synthesis leaves its one result in the middle cell.
+            if result is None or any(grade for i, grade in enumerate(grid) if i != CUBE_RESULT_CELL):
+                cv2.imwrite(os.path.join(get_debug_dir(), "cube_after_synthesize.png"), screenshot)
+                write_log(
+                    f"Cube synthesis stopped: unexpected grid after synthesize | category={category} | "
+                    f"grid={grid} | saved=cube_after_synthesize.png"
+                )
+                cube_click(cube, "return_items")
+                time.sleep(0.8)
+                break
+
+            synthesized += 1
+            write_log(f"Cube synthesis | category={category} | 9 x {filled[0]} -> 1 x {result}")
+            # Move the result into the inventory before the next Auto Fill.
+            cube_click(cube, "return_items")
+            time.sleep(0.8)
+
+            if any(read_cube_grid(capture_window(GAME_HWND), cube)):
+                write_log(f"Cube synthesis stopped: result could not be taken out | category={category}")
+                break
+
+            continue
+
+        if filled:
+            cube_click(cube, "return_items")
+            time.sleep(0.8)
+
+        write_log(
+            f"Cube synthesis done for category | category={category} | synthesized={synthesized} | "
+            f"last_fill={len(filled)} x {sorted(set(filled)) or 'nothing'}"
+        )
+        break
+
+    return synthesized
+
+
+def run_auto_synthesis_if_inventory_full(context):
+    """
+    When the backpack is full, lock Arcana-or-higher items, then synthesize Equipment
+    (Lv.80~90) and Materials in the Cube, and switch the right panel back to PORTAL.
+    Returns True when anything was synthesized.
+    """
+    if not AUTO_SYNTHESIS_ENABLED or input_controller.use_background_input:
+        return False
+
+    if not backpack_is_full(capture_window(GAME_HWND)):
+        return False
+
+    write_log(f"Inventory full; running Cube synthesis | context={context}")
+    lock_protected_items()
+    synthesized = 0
+    cube = switch_right_panel("cube")
+
+    try:
+        if cube is not None and prepare_cube(cube):
+            for category in AUTO_SYNTHESIS_CATEGORIES:
+                synthesized += synthesize_category(cube, category)
+    finally:
+        if switch_right_panel("portal") is None:
+            write_log("WARNING: could not switch the right panel back to PORTAL")
+        input_controller.rest_mouse(GAME_HWND, reason="cube_synthesis_done")
+
+    write_log(f"Cube synthesis finished | synthesized={synthesized} | context={context}")
+    return synthesized > 0
+
+
 def run_backpack_to_storage_transfer(context="blue_chest"):
     wait_seconds = config_non_negative_float("post_blue_chest_storage_wait_seconds", 0.8)
 
@@ -3539,6 +3943,16 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
     if template is None:
         return False
 
+    transferred = transfer_backpack_to_storage(template, context)
+
+    if run_auto_synthesis_if_inventory_full(context):
+        # Synthesis freed stash space; stash what is still in the backpack.
+        transfer_backpack_to_storage(template, "after_synthesis")
+
+    return transferred
+
+
+def transfer_backpack_to_storage(template, context):
     if STACK_STASH_AFTER_TRANSFER:
         return run_stash_stack_pass(template, context)
 

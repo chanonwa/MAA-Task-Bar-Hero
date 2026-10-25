@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 
-APP_VERSION = "1.4"
+APP_VERSION = "1.5"
 _CONFIG_LOAD_MESSAGES = []
 _CONFIG_LOAD_MESSAGES_EMITTED = False
 
@@ -156,6 +156,8 @@ DEFAULT_CONFIG = {
     "act_boss_fight_timeout_seconds": 300.0,
     "act_boss_max_attempts": 1,
     "act_boss_use_all_soulstones": False,
+    "auto_synthesis_enabled": False,
+    "auto_synthesis_up_to_grade": "arcana",
     "non_blue_box_click_cooldown_seconds": 1.0,
     "recover_orphan_blue_chest_before_boss": True,
     "orphan_blue_chest_confirm_cycles": 2,
@@ -392,6 +394,21 @@ def get_config():
         _CONFIG_CACHE = load_config()
 
     return _CONFIG_CACHE
+
+
+# Item grades, lowest first (the slot background colour shows the grade).
+ITEM_GRADES = ("common", "uncommon", "rare", "legendary", "immortal", "arcana", "beyond", "celestial")
+# Grades the Cube synthesis may go up to; items of that grade and above are locked.
+SYNTHESIS_CAP_GRADES = ITEM_GRADES[1:]
+
+
+def get_synthesis_cap_grade(value=None):
+    """The 'synthesize up to' grade from a GUI/env value or config.json (default Arcana)."""
+    if value is None:
+        value = get_config().get("auto_synthesis_up_to_grade", "arcana")
+
+    value = str(value).strip().lower()
+    return value if value in SYNTHESIS_CAP_GRADES else "arcana"
 
 
 # Emergency stop hotkey modifiers: name -> (RegisterHotKey flag, virtual-key codes).
