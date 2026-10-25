@@ -19,7 +19,18 @@ if exist "C:\ProgramData\anaconda3\python.exe" (
     --add-data "config.json;." ^
     --add-data "farm_plan.json;." ^
     --hidden-import win32timezone ^
+    --exclude-module PIL ^
+    --exclude-module ssl ^
+    --exclude-module _hashlib ^
+    --exclude-module psutil ^
+    --exclude-module yaml ^
+    --exclude-module charset_normalizer ^
     route_planner_gui.py
+
+rem Size: Pillow (only pyautogui's unused screenshot helpers need it), OpenSSL and a few
+rem unused helpers are excluded above. The bot never reads or writes video, and OpenCV
+rem only loads this codec (about 29 MB) to open a video, so it is left out too.
+del /q "dist\%APP_NAME%\_internal\cv2\opencv_videoio_ffmpeg*.dll" 2>nul
 
 if not exist "dist\%APP_NAME%\_internal\templates\general\chest_blue.png" (
     echo.

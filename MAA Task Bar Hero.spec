@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PIL', 'ssl', '_hashlib', 'psutil', 'yaml', 'charset_normalizer'],
     noarchive=False,
     optimize=0,
 )
