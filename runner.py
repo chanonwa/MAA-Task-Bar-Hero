@@ -594,11 +594,12 @@ BACKPACK_GRID_COLS = 7
 
 # Auto synthesis in the Cube, run when the inventory (backpack) is full.
 AUTO_SYNTHESIS_ENABLED = env_flag("MAATBH_AUTO_SYNTHESIS", config_bool("auto_synthesis_enabled", False))
-AUTO_SYNTHESIS_CATEGORIES = ("equipment", "materials")
+AUTO_SYNTHESIS_CATEGORIES = ("equipment", "materials", "accessories")
 # The Cube's level range and Fixed Level only apply to equipment and accessories; with
 # materials selected they are greyed out.
-LEVEL_RANGE_CATEGORIES = ("equipment",)
-AUTO_SYNTHESIS_MAX_ROUNDS = 30
+LEVEL_RANGE_CATEGORIES = ("equipment", "accessories")
+# Each category is synthesized until Auto Fill can't make a full set; this is only a safety stop.
+AUTO_SYNTHESIS_MAX_ROUNDS = 100
 # "Synthesize up to" grade: results reach at most this grade, and items of this grade or
 # higher are locked so Auto Fill skips them, and are never synthesized.
 LOCKED_FROM_GRADE = get_synthesis_cap_grade(os.environ.get("MAATBH_AUTO_SYNTHESIS_UP_TO"))
@@ -608,11 +609,17 @@ CUBE_LEVEL_80_90_TEMPLATE_PATH = "templates/general/cube_level_80_90.png"
 CUBE_FILL_ICON_TEMPLATE_PATHS = {
     "equipment": "templates/general/cube_fill_equipment.png",
     "materials": "templates/general/cube_fill_materials.png",
+    "accessories": "templates/general/cube_fill_accessories.png",
 }
 ITEM_LOCK_BADGE_TEMPLATE_PATH = "templates/general/item_lock_badge.png"
 ITEM_LOCK_BADGE_MASK_PATH = "templates/general/item_lock_badge_mask.png"
 CUBE_MATCH_THRESHOLD = 0.9
 ITEM_LOCK_MATCH_THRESHOLD = 0.8
+# Tidying after a synthesis uses the stash's Take All button and the backpack's sort
+# button (next to the Inventory tab).
+STASH_TAKE_ALL_TEMPLATE_PATH = "templates/general/stash_take_all.png"
+BACKPACK_SORT_TEMPLATE_PATH = "templates/general/backpack_sort.png"
+BUTTON_MATCH_THRESHOLD = 0.9
 # Cube controls relative to the CUBE title center (the panel replaces PORTAL on the right).
 CUBE_OFFSETS = {
     "mode_dropdown": (-58, 43),
@@ -626,6 +633,7 @@ CUBE_OFFSETS = {
     "return_items": (-75, 214),
     "equipment": (-51, 298),
     "materials": (-51, 325),
+    "accessories": (-51, 351),
     "include_stash_box": (-103, 302),
     "fixed_level_box": (39, 302),
 }
@@ -1489,6 +1497,8 @@ def get_startup_template_specs():
         ("cube_level_80_90", CUBE_LEVEL_80_90_TEMPLATE_PATH),
         ("item_lock_badge", ITEM_LOCK_BADGE_TEMPLATE_PATH),
         ("item_lock_badge_mask", ITEM_LOCK_BADGE_MASK_PATH),
+        ("stash_take_all", STASH_TAKE_ALL_TEMPLATE_PATH),
+        ("backpack_sort", BACKPACK_SORT_TEMPLATE_PATH),
     ) + tuple((f"cube_fill_{category}", path) for category, path in CUBE_FILL_ICON_TEMPLATE_PATHS.items()):
         add_template_spec(specs, seen_paths, f"general:{name}", path)
 
@@ -3591,8 +3601,9 @@ def show_current_stage_in_portal(expected_route=None):
 
 def item_grade(screenshot, center):
     """
-    Grade of the item in an inventory or Cube slot, or None for an empty slot. The
-    slot's background colour gives the grade; a dark background with item art is Common.
+    Grade of the item in an inventory or Cube slot, or None for an empty slot. The grade
+    is the background colour covering most of the slot's outer band (item art and the
+    "Lv." text only cover part of it); a band with little colour is the dark Common one.
     """
     x, y = center
     inner = crop(screenshot, (x - 12, y - 12, x + 12, y + 12))
@@ -3605,25 +3616,33 @@ def item_grade(screenshot, center):
     if float(gray.std()) <= 12 and int(gray.max()) <= 110:
         return None
 
-    corner = crop(screenshot, (x - 16, y - 16, x - 12, y - 12))
-    b, g, r = np.median(corner.reshape(-1, 3), axis=0)
-    hue, saturation, value = cv2.cvtColor(np.uint8([[[b, g, r]]]), cv2.COLOR_BGR2HSV)[0, 0].tolist()
+    square = crop(screenshot, (x - 17, y - 17, x + 18, y + 18))
 
-    if value > 190 and 85 <= hue < 110:
-        return "celestial"
-    if value < 45 or saturation < 50:
+    if square is None or square.shape[:2] != (35, 35):
+        return None
+
+    hsv = cv2.cvtColor(square, cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(int)
+    offsets_y, offsets_x = np.mgrid[-17:18, -17:18]
+    band = ((np.abs(offsets_x) >= 12) | (np.abs(offsets_y) >= 12)).reshape(-1)
+    hue, saturation, value = hsv[band, 0], hsv[band, 1], hsv[band, 2]
+
+    celestial = (value > 190) & (hue >= 85) & (hue < 110)
+    coloured = (value >= 45) & (saturation >= 50) & ~celestial
+    labels = np.full(hue.shape, "", dtype=object)
+    labels[celestial] = "celestial"
+    labels[coloured & (hue >= 35) & (hue < 85)] = "uncommon"
+    labels[coloured & (hue >= 85) & (hue < 125)] = "rare"
+    labels[coloured & (hue >= 125) & (hue < 160)] = "arcana"
+    labels[coloured & (hue >= 160) & (hue < 176)] = "beyond"
+    labels[coloured & (hue >= 8) & (hue < 30)] = "legendary"
+    labels[coloured & ((hue < 8) | (hue >= 176))] = "immortal"
+    counted = labels[labels != ""]
+
+    if len(counted) < 0.35 * band.sum():
         return "common"
-    if 35 <= hue < 85:
-        return "uncommon"
-    if 85 <= hue < 125:
-        return "rare"
-    if 125 <= hue < 160:
-        return "arcana"
-    if 160 <= hue < 176:
-        return "beyond"
-    if 8 <= hue < 30:
-        return "legendary"
-    return "immortal"
+
+    grades, counts = np.unique(counted, return_counts=True)
+    return str(grades[counts.argmax()])
 
 
 def grade_is_protected(grade):
@@ -3653,46 +3672,112 @@ def backpack_is_full(screenshot):
     return bool(centers) and all(item_grade(screenshot, c) is not None for c in centers)
 
 
-def lock_protected_items_in_view(location, find_centers):
+def set_protected_items_locked(location, find_centers, lock):
     """
-    ALT+click every unlocked item of LOCKED_FROM_GRADE or higher in one grid, so Cube
-    Auto Fill skips it. Soulstones are left alone (a locked one may not be usable).
+    ALT+click every item of LOCKED_FROM_GRADE or higher in one grid whose lock state
+    differs from `lock`. Locked items are skipped by Cube Auto Fill. Soulstones are
+    left alone (a locked one may not be usable).
     """
     screenshot = capture_window(GAME_HWND)
     icon_templates = load_soulstone_icon_templates()
     targets = [
         center for center in find_centers(screenshot)
         if grade_is_protected(item_grade(screenshot, center))
-        and not item_is_locked(screenshot, center)
+        and item_is_locked(screenshot, center) != lock
         and not slot_has_soulstone(screenshot, center, icon_templates)
     ]
+    action = "lock" if lock else "unlock"
 
     for center in targets:
-        input_controller.alt_click_window_point(GAME_HWND, center[0], center[1], label=f"lock_item:{location}")
+        input_controller.alt_click_window_point(GAME_HWND, center[0], center[1], label=f"{action}_item:{location}")
         # Close the item's tooltip before the next click; it can cover other slots.
-        input_controller.rest_mouse(GAME_HWND, reason=f"lock_item_done:{location}")
+        input_controller.rest_mouse(GAME_HWND, reason=f"{action}_item_done:{location}")
 
     if targets:
         screenshot = capture_window(GAME_HWND)
-        still_unlocked = [c for c in targets if not item_is_locked(screenshot, c)]
+        failed = [c for c in targets if item_is_locked(screenshot, c) != lock]
         write_log(
-            f"Locked items | location={location} | locked={len(targets) - len(still_unlocked)} | "
-            f"failed={still_unlocked or 'none'}"
+            f"{action.title()}ed items | location={location} | done={len(targets) - len(failed)} | "
+            f"failed={failed or 'none'}"
         )
 
     return len(targets)
 
 
-def lock_protected_items():
-    """Lock Arcana-or-higher items on stash tabs 1-4 and in the backpack."""
+def for_each_stash_tab(action):
+    """Open stash tabs 1-4 in turn and run action(stash_name) on each."""
     for stash_name in get_stash_stack_pages():
         if not click_stash_page_tab(GAME_HWND, capture_window(GAME_HWND), stash_name):
             continue
 
         time.sleep(STASH_SWITCH_WAIT_SECONDS)
-        lock_protected_items_in_view(stash_name, stash_grid_centers)
+        action(stash_name)
 
-    lock_protected_items_in_view("backpack", backpack_grid_centers)
+
+def set_all_protected_items_locked(lock):
+    """Lock (or unlock) the protected items on stash tabs 1-4 and in the backpack."""
+    for_each_stash_tab(lambda stash_name: set_protected_items_locked(stash_name, stash_grid_centers, lock))
+    set_protected_items_locked("backpack", backpack_grid_centers, lock)
+
+
+def click_button(template_path, label):
+    """Click a button found by its template; False when it isn't on screen."""
+    center = find_template_center(capture_window(GAME_HWND), template_path, BUTTON_MATCH_THRESHOLD)
+
+    if center is None:
+        write_log(f"Button not found | button={label} | template={template_path}")
+        return False
+
+    click_window_point(GAME_HWND, *center, label=label)
+    time.sleep(config_non_negative_float("post_storage_click_wait_seconds", 0.8))
+    return True
+
+
+def sort_stash_tab(stash_name):
+    sort_button = find_stash_sort_button(capture_window(GAME_HWND))
+
+    if not sort_button.get("found") or sort_button.get("center") is None:
+        write_log(f"Stash sort skipped: sort button not found | stash={stash_name}")
+        return
+
+    click_window_point(GAME_HWND, *sort_button["center"], label=f"stash_sort:{stash_name}")
+    time.sleep(POST_STASH_SORT_WAIT_SECONDS)
+
+
+def tidy_stash_after_synthesis(stash_all_template):
+    """
+    After a synthesis, sort the stash as a whole: unlock the protected items and Take All
+    from stash tabs 1-4 into the backpack (it holds about 100 items, far more than the 21
+    slots it shows), sort the backpack, then Stash All onto tabs 1-4 in order, locking the
+    protected grades on each tab once it is filled.
+    """
+    write_log("Tidying the stash after Cube synthesis: take all, sort the backpack, stash and lock again")
+    tabs_with_items_left = set()
+
+    def take_all(stash_name):
+        set_protected_items_locked(stash_name, stash_grid_centers, False)
+        click_button(STASH_TAKE_ALL_TEMPLATE_PATH, f"stash_take_all:{stash_name}")
+        screenshot = capture_window(GAME_HWND)
+        left = sum(item_grade(screenshot, c) is not None for c in stash_grid_centers(screenshot))
+        write_log(f"Take All from the stash tab | stash={stash_name} | items_left={left}")
+
+        if left:
+            tabs_with_items_left.add(stash_name)
+
+    def stash_all(stash_name):
+        click_backpack_to_storage_button(capture_window(GAME_HWND), stash_all_template, f"tidy:{stash_name}")
+
+        if stash_name in tabs_with_items_left:
+            # The backpack filled up before this tab emptied; sort it on its own.
+            sort_stash_tab(stash_name)
+
+        set_protected_items_locked(stash_name, stash_grid_centers, True)
+
+    set_protected_items_locked("backpack", backpack_grid_centers, False)
+    for_each_stash_tab(take_all)
+    click_button(BACKPACK_SORT_TEMPLATE_PATH, "backpack_sort")
+    for_each_stash_tab(stash_all)
+    set_protected_items_locked("backpack", backpack_grid_centers, True)
 
 
 def right_panel_center(screenshot, panel):
@@ -3904,8 +3989,9 @@ def synthesize_category(cube, category):
 
 def run_auto_synthesis_if_inventory_full(context):
     """
-    When the backpack is full, lock Arcana-or-higher items, then synthesize Equipment
-    (Lv.80~90) and Materials in the Cube, and switch the right panel back to PORTAL.
+    When the backpack is full, lock the protected grades, then synthesize Equipment and
+    Accessories (Lv.80~90) and Materials in the Cube, each until Auto Fill can't make a
+    full set, and switch the right panel back to PORTAL.
     Returns True when anything was synthesized.
     """
     if not AUTO_SYNTHESIS_ENABLED or input_controller.use_background_input:
@@ -3915,7 +4001,7 @@ def run_auto_synthesis_if_inventory_full(context):
         return False
 
     write_log(f"Inventory full; running Cube synthesis | context={context}")
-    lock_protected_items()
+    set_all_protected_items_locked(True)
     synthesized = 0
     cube = switch_right_panel("cube")
 
@@ -3946,8 +4032,8 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
     transferred = transfer_backpack_to_storage(template, context)
 
     if run_auto_synthesis_if_inventory_full(context):
-        # Synthesis freed stash space; stash what is still in the backpack.
-        transfer_backpack_to_storage(template, "after_synthesis")
+        # Synthesis freed stash space; sort the stash and the backpack together into it.
+        tidy_stash_after_synthesis(template)
 
     return transferred
 
