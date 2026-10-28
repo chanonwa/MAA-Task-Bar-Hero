@@ -120,6 +120,9 @@ class InputController:
 
     def focus_window(self, hwnd, warning_message="Window focus warning", wait_seconds=0.2):
         try:
+            if win32gui.GetForegroundWindow() == hwnd:
+                return True
+
             win32gui.SetForegroundWindow(hwnd)
             time.sleep(wait_seconds)
             return True
@@ -499,6 +502,32 @@ class InputController:
                 f"reason={e}"
             )
             return False
+
+    def wheel_at_window_point(self, hwnd, local_x, local_y, notches, label="wheel"):
+        """
+        Turn the mouse wheel over a point (positive notches scroll up) with real input,
+        then rest the mouse. Foreground input only.
+        """
+        if self.use_background_input:
+            return False
+
+        _client_x, _client_y, screen_x, screen_y, _scaling = self.screenshot_local_to_click_coordinates(
+            hwnd,
+            local_x,
+            local_y,
+            label=label,
+        )
+        self.focus_window(hwnd)
+
+        if not self.hover_screen_point(screen_x, screen_y, label=label):
+            return False
+
+        time.sleep(0.05)
+        scrolled = self.safe_pyautogui_scroll(notches * 120, label=label)
+        # The view glides to its new position.
+        time.sleep(0.25)
+        self.rest_mouse(hwnd, reason=f"after_wheel:{label}")
+        return scrolled
 
     def safe_pyautogui_scroll(self, amount, label="mouse_scroll"):
         try:
@@ -900,10 +929,21 @@ class InputController:
         time.sleep(0.5)
         return True
 
-    def click_window_point(self, hwnd, local_x, local_y, label="", coordinate_space="screenshot", button="left"):
+    def click_window_point(
+        self,
+        hwnd,
+        local_x,
+        local_y,
+        label="",
+        coordinate_space="screenshot",
+        button="left",
+        settle_seconds=None,
+    ):
         """
         Click a point using local captured-window coordinates.
         Uses either real mouse or background window message depending on settings.
+        settle_seconds overrides the wait after the click (nav_click_delay_seconds);
+        callers that watch the screen for the click's effect pass 0.
         """
         if self.use_background_input:
             return self.background_click_window_point(
@@ -940,11 +980,7 @@ class InputController:
             f"client_origin={self.format_diag_value(client_origin)}"
         )
 
-        try:
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.2)
-        except Exception as e:
-            self.write_log(f"Window focus warning: {e}")
+        self.focus_window(hwnd)
 
         if not self.safe_pyautogui_move_to(
             screen_x,
@@ -957,7 +993,7 @@ class InputController:
         if not self.safe_pyautogui_click(screen_x, screen_y, label=label, button=button):
             return False
 
-        time.sleep(self.nav_click_delay_seconds)
+        time.sleep(self.nav_click_delay_seconds if settle_seconds is None else settle_seconds)
         self.rest_mouse(hwnd, reason=f"after_click:{label}")
         return True
 
@@ -990,7 +1026,7 @@ class InputController:
         finally:
             win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
 
-        time.sleep(0.2)
+        time.sleep(0.1)
         return clicked
 
     def scroll_map(self, hwnd, direction, repeat, focus, resolve_legacy_focus):
@@ -1010,11 +1046,7 @@ class InputController:
                 source=focus["source"],
             )
 
-        try:
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.2)
-        except Exception as e:
-            self.write_log(f"Window focus warning before scroll: {e}")
+        self.focus_window(hwnd, warning_message="Window focus warning before scroll")
 
         # Hover the map with real move events; the wheel then scrolls it. There is
         # no focus click, so a stage under the cursor is never pressed.
@@ -1114,11 +1146,11 @@ class InputController:
 
                 method = "background_burst"
             else:
-                try:
-                    win32gui.SetForegroundWindow(hwnd)
-                    time.sleep(0.05)
-                except Exception as e:
-                    self.write_log(f"Window focus warning before fast scroll: {e}")
+                self.focus_window(
+                    hwnd,
+                    warning_message="Window focus warning before fast scroll",
+                    wait_seconds=0.05,
+                )
 
                 # Hover the map with real move events; the wheel then scrolls it. There is
                 # no focus click, so a stage under the cursor is never pressed.

@@ -536,6 +536,8 @@ MOVE_BACKPACK_TO_STORAGE_AFTER_NON_BLUE_BOX = env_flag(
 AUTO_SWITCH_STASH_WHEN_FULL = config_bool("auto_switch_stash_when_full", True)
 MAX_STASH_PAGES_TO_SCAN = config_positive_int("max_stash_pages_to_scan", 4)
 STASH_TAB_MATCH_THRESHOLD = config_non_negative_float("stash_tab_match_threshold", 0.80)
+# The open tab's selected look scores 1.00 on it and at most about 0.55 on the other tabs.
+STASH_TAB_SELECTED_THRESHOLD = 0.9
 STORAGE_ANCHOR_MATCH_THRESHOLD = config_non_negative_float("storage_anchor_match_threshold", 0.80)
 STASH_LAST_SLOT_BLANK_THRESHOLD = config_non_negative_float("stash_last_slot_blank_threshold", 0.85)
 STASH_LAST_SLOT_UNCERTAIN_MARGIN = config_non_negative_float("stash_last_slot_uncertain_margin", 0.05)
@@ -591,6 +593,9 @@ HERO_TITLE_TEMPLATE_PATH = "templates/general/hero_title.png"
 BACKPACK_GRID_OFFSET_FROM_HERO_TITLE = (-118, 208)
 BACKPACK_GRID_ROWS = 3
 BACKPACK_GRID_COLS = 7
+# The backpack shows 3 of its 15 rows (104 slots and a "+" expand slot) and scrolls 30 px
+# per wheel notch, so this many notches up always reaches its top from anywhere.
+BACKPACK_SCROLL_TO_TOP_NOTCHES = 25
 
 # Auto synthesis in the Cube, run when the inventory (backpack) is full.
 AUTO_SYNTHESIS_ENABLED = env_flag("MAATBH_AUTO_SYNTHESIS", config_bool("auto_synthesis_enabled", False))
@@ -600,6 +605,10 @@ AUTO_SYNTHESIS_CATEGORIES = ("equipment", "materials", "accessories")
 LEVEL_RANGE_CATEGORIES = ("equipment", "accessories")
 # Each category is synthesized until Auto Fill can't make a full set; this is only a safety stop.
 AUTO_SYNTHESIS_MAX_ROUNDS = 100
+# After a Cube run that synthesized nothing, wait this long before opening the Cube again,
+# so a full inventory with nothing to combine doesn't cost a Cube run after every stash pass.
+AUTO_SYNTHESIS_RETRY_MINUTES = config_non_negative_float("auto_synthesis_retry_minutes", 10)
+last_empty_synthesis_at = None
 # "Synthesize up to" grade: results reach at most this grade, and items of this grade or
 # higher are locked so Auto Fill skips them, and are never synthesized.
 LOCKED_FROM_GRADE = get_synthesis_cap_grade(os.environ.get("MAATBH_AUTO_SYNTHESIS_UP_TO"))
@@ -648,6 +657,9 @@ SOULSTONE_TOOLTIP_WAIT_SECONDS = config_non_negative_float("soulstone_tooltip_wa
 SOULSTONE_SCAN_MAX_AGE_SECONDS = 60
 ACT_BOSS_FIGHT_TIMEOUT_SECONDS = config_non_negative_float("act_boss_fight_timeout_seconds", 300.0)
 ACT_BOSS_CHEST_WAIT_SECONDS = config_non_negative_float("act_boss_chest_wait_seconds", 10.0)
+# After a win the game shows CLEAR, then goes back to the stage it left; the next fight
+# waits at most this long for that.
+ACT_BOSS_RETURN_TIMEOUT_SECONDS = config_non_negative_float("act_boss_return_timeout_seconds", 20.0)
 ACT_BOSS_MAX_ATTEMPTS = env_positive_int(
     "MAATBH_ACT_BOSS_MAX_ATTEMPTS",
     config_positive_int("act_boss_max_attempts", 1),
@@ -707,6 +719,8 @@ last_blue_alert_time = 0
 last_brown_log_time = 0
 last_non_blue_box_click_time = 0
 soulstone_difficulties = set()
+# Where the last scan saw each difficulty's soulstones: {difficulty: [(location, slot_center)]}.
+soulstone_slots = {}
 soulstone_scan_time = 0.0
 last_seen_chest_time = 0
 last_state = "none"
@@ -2767,22 +2781,61 @@ def click_stash_page_tab(hwnd, screenshot, stash_name):
         )
         return False
 
-    click_ok = click_window_point(
-        hwnd,
-        center[0],
-        center[1],
-        label=f"stash_tab_{stash_name}",
-    )
+    if stash_tab_is_selected(screenshot, stash_name, center):
+        write_log(f"Stash tab already open | target={stash_name} | center={center}")
+        return True
 
-    if not click_ok:
-        write_log(
-            f"Stash switch failed safely during click | "
-            f"target={stash_name} | center={center}"
+    # Wait for the tab to show its selected look rather than a fixed pause. The first click
+    # on an inactive game window may only activate it, hence one more try.
+    for attempt in (1, 2):
+        click_ok = click_window_point(
+            hwnd,
+            center[0],
+            center[1],
+            label=f"stash_tab_{stash_name}",
+            settle_seconds=0,
         )
+
+        if not click_ok:
+            write_log(
+                f"Stash switch failed safely during click | "
+                f"target={stash_name} | center={center}"
+            )
+            return False
+
+        shown, _screenshot = wait_for_screen(
+            lambda s: stash_tab_is_selected(s, stash_name, center),
+            max(2 * STASH_SWITCH_WAIT_SECONDS, 0.5),
+        )
+
+        if shown:
+            write_log(f"Stash switch click sent | target={stash_name} | center={center} | attempt={attempt}")
+            return True
+
+    write_log(f"Stash switch failed: the tab didn't open | target={stash_name} | center={center}")
+    return False
+
+
+def stash_tab_is_selected(screenshot, stash_name, center):
+    """True when the tab at center shows its selected look (only the open tab does)."""
+    path = get_stash_tab_templates(selected=True).get(stash_name)
+
+    try:
+        template = load_template(path) if path else None
+    except FileNotFoundError:
+        template = None
+
+    if template is None:
         return False
 
-    write_log(f"Stash switch click sent | target={stash_name} | center={center}")
-    return True
+    height, width = template.shape[:2]
+    x, y = center
+    box = crop(screenshot, (x - width // 2 - 6, y - height // 2 - 6, x + width // 2 + 6, y + height // 2 + 6))
+
+    if box is None or box.shape[0] < height or box.shape[1] < width:
+        return False
+
+    return match_template(box, template)["confidence"] >= STASH_TAB_SELECTED_THRESHOLD
 
 
 def ensure_storage_stash_has_space(hwnd, screenshot):
@@ -2937,7 +2990,6 @@ def ensure_storage_stash_has_space(hwnd, screenshot):
             f"Stash switch target recorded | target={next_stash} | "
             f"checked={checked_pages}"
         )
-        time.sleep(STASH_SWITCH_WAIT_SECONDS)
 
         try:
             current_screenshot = capture_window(hwnd)
@@ -2981,12 +3033,29 @@ def load_backpack_to_storage_template(context):
     return template
 
 
+def backpack_holds_items():
+    """
+    True when the backpack holds an item. Stash All leaves gaps it never closes, so a top
+    that looks empty is sorted (which packs items at the top) and looked at again.
+    """
+    scroll_backpack_to_top()
+
+    if count_items(capture_window(GAME_HWND), backpack_grid_centers) > 0:
+        return True
+
+    sort_backpack()
+    return count_items(capture_window(GAME_HWND), backpack_grid_centers) > 0
+
+
 def run_stash_stack_pass(template, context, press_stash_all=True):
     """
     Press stash all on each configured stash tab in order (1 -> 2 -> 3 -> 4), so every
     backpack item first stacks onto a matching item on an earlier tab before it
     takes a new slot. Around blue chests and act boss fights it also notes which
     soulstone difficulties each tab and the backpack hold.
+
+    Once the backpack is empty the remaining tabs are skipped (unless soulstones are
+    being looked for). Returns False when a tab couldn't be opened or read.
     """
     pages = get_stash_stack_pages()
     scan_soulstones = USE_SOULSTONES_FOR_ACT_BOSSES and context.startswith(("blue_chest", "act_boss"))
@@ -3001,8 +3070,24 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
 
     write_log(f"Stash stack pass started | context={context} | pages={pages}")
     stacked_pages = []
+    completed = True
+    backpack_has_items = press_stash_all and backpack_holds_items()
+
+    if press_stash_all and not backpack_has_items:
+        write_log(f"Stash stack pass: the backpack is empty; no Stash All needed | context={context}")
+
+    # Soulstones only reach a stash tab through Stash All, so after the first full scan only
+    # the tabs that just got items, or held soulstones last time, are looked at again.
+    full_scan = soulstone_scan_time == 0
+    soulstone_tabs = {location for slots in soulstone_slots.values() for location, _slot in slots}
 
     for stash_name in pages:
+        stash_here = backpack_has_items
+        scan_here = scan_soulstones and (full_scan or stash_here or stash_name in soulstone_tabs)
+
+        if not stash_here and not scan_here:
+            continue
+
         try:
             screenshot = capture_window(GAME_HWND)
         except Exception as e:
@@ -3010,6 +3095,7 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
                 f"Stash stack pass aborted: screenshot failed | "
                 f"stash={stash_name} | context={context} | error={e}"
             )
+            completed = False
             break
 
         if screenshot is None:
@@ -3017,6 +3103,7 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
                 f"Stash stack pass aborted: screenshot failed | "
                 f"stash={stash_name} | context={context}"
             )
+            completed = False
             break
 
         if not click_stash_page_tab(GAME_HWND, screenshot, stash_name):
@@ -3024,9 +3111,8 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
                 f"Stash stack pass skipped tab: switch failed | "
                 f"stash={stash_name} | context={context}"
             )
+            completed = False
             continue
-
-        time.sleep(STASH_SWITCH_WAIT_SECONDS)
 
         try:
             screenshot = capture_window(GAME_HWND)
@@ -3035,6 +3121,7 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
                 f"Stash stack pass aborted: screenshot after tab switch failed | "
                 f"stash={stash_name} | context={context} | error={e}"
             )
+            completed = False
             break
 
         if screenshot is None:
@@ -3042,28 +3129,41 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
                 f"Stash stack pass aborted: screenshot after tab switch failed | "
                 f"stash={stash_name} | context={context}"
             )
+            completed = False
             break
 
-        if press_stash_all and click_backpack_to_storage_button(
-            screenshot,
-            template,
-            f"{context}:stack_{stash_name}",
-        ):
-            stacked_pages.append(stash_name)
+        if stash_here:
+            if click_backpack_to_storage_button(screenshot, template, f"{context}:stack_{stash_name}"):
+                stacked_pages.append(stash_name)
+            else:
+                completed = False
 
-        if scan_soulstones:
+            if auto_synthesis_active():
+                # Lock protected loot as it is stashed, so the Cube's Auto Fill never takes it
+                # and a synthesis run doesn't have to visit every tab first.
+                set_protected_items_locked(stash_name, stash_grid_centers, True)
+
+            # Stash All stops short of a full tab only when it has nothing left to move.
+            tab_full = count_items(capture_window(GAME_HWND), stash_grid_centers) >= STORAGE_GRID_ROWS * STORAGE_GRID_COLS
+            backpack_has_items = tab_full and backpack_holds_items()
+
+        if scan_here:
             found_soulstones |= scan_open_stash_tab_for_soulstones(stash_name, context)
+
+    if backpack_has_items:
+        # Every tab is full: pack what is left at the top for the full-inventory check.
+        sort_backpack()
 
     write_log(
         f"Stash stack pass finished | context={context} | "
-        f"stacked={stacked_pages} | requested={pages}"
+        f"stacked={stacked_pages} | requested={pages} | items_left_in_backpack={backpack_has_items}"
     )
 
     if scan_soulstones:
         found_soulstones |= scan_backpack_for_soulstones(context)
         record_soulstone_scan(found_soulstones, context)
 
-    return len(stacked_pages) == len(pages)
+    return completed
 
 
 def item_grid_centers(first_center, rows, cols):
@@ -3111,6 +3211,26 @@ def backpack_grid_centers(screenshot):
         hero[1] + BACKPACK_GRID_OFFSET_FROM_HERO_TITLE[1],
     )
     return item_grid_centers(first_center, BACKPACK_GRID_ROWS, BACKPACK_GRID_COLS)
+
+
+def scroll_backpack_to_top():
+    """The backpack is read from its top rows, so scroll it there first; it may have moved."""
+    centers = backpack_grid_centers(capture_window(GAME_HWND))
+
+    if not centers:
+        return False
+
+    return input_controller.wheel_at_window_point(
+        GAME_HWND, *centers[10], BACKPACK_SCROLL_TO_TOP_NOTCHES, label="backpack_to_top"
+    )
+
+
+def sort_backpack():
+    """Sort the backpack, which also packs its items at the top, and show its top rows."""
+    sorted_ok = click_button(BACKPACK_SORT_TEMPLATE_PATH, "backpack_sort")
+    time.sleep(POST_STASH_SORT_WAIT_SECONDS)
+    scroll_backpack_to_top()
+    return sorted_ok
 
 
 def load_soulstone_icon_templates():
@@ -3213,7 +3333,10 @@ def read_soulstone_difficulty(slot_center, context):
 
 
 def scan_for_soulstones(location, find_slots, context):
-    """Hover every soulstone that find_slots sees and return their difficulties."""
+    """
+    Hover every soulstone that find_slots sees. Returns {(difficulty, location, slot_center)}
+    for the ones whose difficulty was read.
+    """
     try:
         screenshot = capture_window(GAME_HWND)
     except Exception as e:
@@ -3235,7 +3358,7 @@ def scan_for_soulstones(location, find_slots, context):
         )
 
         if difficulty:
-            difficulties.add(difficulty)
+            difficulties.add((difficulty, location, slot_center))
 
     if slots:
         # Close the last soulstone tooltip before anything is read again.
@@ -3249,19 +3372,35 @@ def scan_open_stash_tab_for_soulstones(stash_name, context):
 
 
 def scan_backpack_for_soulstones(context):
+    scroll_backpack_to_top()
     return scan_for_soulstones("backpack", find_backpack_soulstone_slots, context)
 
 
-def record_soulstone_scan(difficulties, context):
+def record_soulstone_scan(found, context):
+    """found: {(difficulty, location, slot_center)} from scan_for_soulstones."""
     global soulstone_difficulties
+    global soulstone_slots
     global soulstone_scan_time
 
-    soulstone_difficulties = set(difficulties)
+    soulstone_slots = {}
+
+    for difficulty, location, slot_center in found:
+        soulstone_slots.setdefault(difficulty, []).append((location, slot_center))
+
+    soulstone_difficulties = set(soulstone_slots)
     soulstone_scan_time = time.time()
     write_log(
         f"Soulstone scan | context={context} | "
         f"difficulties={sorted(soulstone_difficulties) or 'none'}"
     )
+
+
+def forget_soulstone_slots(reason):
+    """Make the next soulstone scan a full one, after items were moved around."""
+    global soulstone_scan_time
+
+    soulstone_scan_time = 0.0
+    write_log(f"Soulstone positions will be scanned again | reason={reason}")
 
 
 def scan_stash_tabs_for_soulstones(context):
@@ -3300,6 +3439,9 @@ def wait_for_act_boss_result(route):
     clear_template = load_template(CLEAR_TEMPLATE_PATH)
     started = time.time()
     clear_seen_at = None
+    # A chest still showing from an earlier fight doesn't count; this fight's chest is
+    # the one that appears after it is gone.
+    chest_was_absent = False
 
     while time.time() - started < ACT_BOSS_FIGHT_TIMEOUT_SECONDS:
         try:
@@ -3313,7 +3455,9 @@ def wait_for_act_boss_result(route):
             time.sleep(1.0)
             continue
 
-        if find_act_boss_chest(screenshot) is not None:
+        if find_act_boss_chest(screenshot) is None:
+            chest_was_absent = True
+        elif chest_was_absent:
             write_log(
                 f"Act boss defeated | target={route_target_label(route)} | "
                 f"seconds={time.time() - started:.0f}"
@@ -3341,33 +3485,116 @@ def wait_for_act_boss_result(route):
     return "loss"
 
 
-def attempt_act_boss(route):
-    write_log(f"Act boss attempt | target={route_target_label(route)}")
+def portal_shows_route_act(screenshot, route):
+    """True when the PORTAL shows the route's difficulty and act (read only, no clicks)."""
+    name, _anchor, confidence, _info = find_best_difficulty_anchor(screenshot)
+    chapter = find_current_chapter(screenshot)[0]
+    return name == route["difficulty"] and confidence >= DIFFICULTY_MATCH_THRESHOLD and chapter == route["chapter"]
 
-    if not select_difficulty_and_chapter(GAME_HWND, route):
-        return "unavailable"
 
-    # A locked "-10" stage shows a padlock and no label, so the search fails.
-    if not find_and_click_level_by_template(GAME_HWND, route):
+def current_stage_in_view(screenshot, chapter):
+    """The green (current) stage in the PORTAL view, read only: its level, or None."""
+    dot = find_current_stage_dot(screenshot)
+    return read_stage_label_next_to_dot(screenshot, dot, chapter)[0] if dot is not None else None
+
+
+def press_boss_stage_again(route):
+    """
+    Press the boss stage straight from the PORTAL view the last fight left. After a fight
+    the game goes back to the stage it left, but the PORTAL keeps showing the boss's
+    difficulty and act, so no selecting or scrolling is needed; the view is only looked
+    at to confirm that. Returns True/False once the stage was pressed, None when the
+    view no longer shows it (then the full selection runs).
+    """
+    screenshot = capture_window(GAME_HWND)
+
+    if screenshot is None or not portal_shows_route_act(screenshot, route):
+        return None
+
+    threshold = max(LEVEL_STRONG_ACCEPT_THRESHOLD, route.get("level_match_threshold", LEVEL_MATCH_THRESHOLD))
+    return try_current_visible_level(GAME_HWND, route, load_template(route["level_template"]), threshold, "boss_repeat")
+
+
+def attempt_act_boss(route, repeat=False):
+    """
+    One fight. The first fight on a stage selects the difficulty and act and finds the
+    stage (the full check); a repeat presses the stage again from the current view.
+    """
+    write_log(f"Act boss attempt | target={route_target_label(route)} | repeat={repeat}")
+    pressed = press_boss_stage_again(route) if repeat else None
+
+    if pressed is None:
+        if repeat:
+            write_log(f"Act boss repeat: the PORTAL view moved; selecting the stage again | target={route_target_label(route)}")
+
+        if not select_difficulty_and_chapter(GAME_HWND, route):
+            return "unavailable"
+
+        # A locked "-10" stage shows a padlock and no label, so the search fails.
+        pressed = find_and_click_level_by_template(GAME_HWND, route)
+
+    if not pressed:
         write_log(f"Act boss stage unavailable (locked or not found) | target={route_target_label(route)}")
         return "unavailable"
 
     return wait_for_act_boss_result(route)
 
 
-def collect_after_act_boss(outcome):
-    """Open the act boss chest after a win, then stash and re-check soulstones."""
-    if outcome == "win":
-        try:
-            screenshot = capture_window(GAME_HWND)
-        except Exception:
-            screenshot = None
+def wait_until_back_from_boss_stage(route):
+    """
+    After a win the boss stage stays the current (green) one through CLEAR until the game
+    goes back to the stage it left; pressing the boss stage before that is lost. True
+    once it is no longer current.
+    """
+    back, _screenshot = wait_for_screen(
+        lambda s: current_stage_in_view(s, route["chapter"]) != route["level"],
+        ACT_BOSS_RETURN_TIMEOUT_SECONDS,
+        interval=0.5,
+    )
 
-        chest = find_act_boss_chest(screenshot) if screenshot is not None else None
+    if not back:
+        write_log(f"Act boss stage still current after {ACT_BOSS_RETURN_TIMEOUT_SECONDS:.0f}s | target={route_target_label(route)}")
 
-        if chest is not None:
-            open_queued_chests(GAME_HWND, *chest["center_full"], "act_boss")
+    return back
 
+
+def open_act_boss_chest(outcome):
+    """Open the act boss chest after a win, so the next win shows as a new chest."""
+    if outcome != "win":
+        return
+
+    try:
+        screenshot = capture_window(GAME_HWND)
+    except Exception:
+        screenshot = None
+
+    chest = find_act_boss_chest(screenshot) if screenshot is not None else None
+
+    if chest is not None:
+        open_queued_chests(GAME_HWND, *chest["center_full"], "act_boss")
+
+
+def soulstone_left(difficulty):
+    """
+    After a fight, look only at the slots where this difficulty's soulstones were seen,
+    instead of scanning every tab. True while one is still there.
+    """
+    icon_templates = load_soulstone_icon_templates()
+
+    for location, slot_center in soulstone_slots.get(difficulty, []):
+        if location == "backpack":
+            scroll_backpack_to_top()
+        elif not click_stash_page_tab(GAME_HWND, capture_window(GAME_HWND), location):
+            continue
+
+        if slot_has_soulstone(capture_window(GAME_HWND), slot_center, icon_templates):
+            return True
+
+    return False
+
+
+def stash_after_act_boss_run():
+    """Stash the boss chests' loot once after all the fights; that pass re-scans soulstones."""
     scan_before = soulstone_scan_time
 
     if blue_chest_storage_enabled():
@@ -3385,6 +3612,9 @@ def run_act_boss_attempts_if_enabled():
     Stops after the configured number of fights, or when every soulstone is used
     with "use all soulstones". The game returns to the stage it left after each fight,
     and the PORTAL window is then left showing that stage.
+
+    Only the first fight on a stage gets the full stage check; the fights after it go
+    back to back, opening each boss chest but stashing only once at the end.
     """
     if not USE_SOULSTONES_FOR_ACT_BOSSES:
         return
@@ -3409,26 +3639,41 @@ def run_act_boss_attempts_if_enabled():
     for difficulty in difficulties:
         for act in ACT_BOSS_ACT_ORDER:
             route = get_act_boss_route(difficulty, act)
+            repeat = False
 
             while (
                 route is not None
                 and attempts < fight_limit
                 and difficulty in soulstone_difficulties
             ):
-                outcome = attempt_act_boss(route)
+                outcome = attempt_act_boss(route, repeat)
 
                 if outcome == "unavailable":
                     break
 
                 attempts += 1
                 results.append(f"{difficulty} {act}-10 {outcome}")
-                collect_after_act_boss(outcome)
+                open_act_boss_chest(outcome)
+
+                if not soulstone_left(difficulty):
+                    soulstone_difficulties.discard(difficulty)
+                    soulstone_slots.pop(difficulty, None)
+                    write_log(f"Act boss: {difficulty} soulstones used up")
 
                 if outcome == "loss":
                     break
 
+                # Also after the last win, so nothing presses the farm stage before the game is back.
+                if not wait_until_back_from_boss_stage(route):
+                    break
+
+                repeat = True
+
     if attempts >= fight_limit:
         write_log(f"Act boss run stopped at the fight limit | limit={fight_limit}")
+
+    if attempts:
+        stash_after_act_boss_run()
 
     write_log(
         f"Act boss run finished | attempts={attempts} | results={results or 'none'} | "
@@ -3672,6 +3917,10 @@ def backpack_is_full(screenshot):
     return bool(centers) and all(item_grade(screenshot, c) is not None for c in centers)
 
 
+def count_items(screenshot, find_centers):
+    return sum(item_grade(screenshot, c) is not None for c in find_centers(screenshot))
+
+
 def set_protected_items_locked(location, find_centers, lock):
     """
     ALT+click every item of LOCKED_FROM_GRADE or higher in one grid whose lock state
@@ -3687,18 +3936,28 @@ def set_protected_items_locked(location, find_centers, lock):
         and not slot_has_soulstone(screenshot, center, icon_templates)
     ]
     action = "lock" if lock else "unlock"
+    pending = targets
 
-    for center in targets:
-        input_controller.alt_click_window_point(GAME_HWND, center[0], center[1], label=f"{action}_item:{location}")
-        # Close the item's tooltip before the next click; it can cover other slots.
-        input_controller.rest_mouse(GAME_HWND, reason=f"{action}_item_done:{location}")
+    # The targets come from one screenshot, so the clicks go back to back; one rest at the
+    # end closes the last tooltip before the check. A missed click is retried once.
+    for _attempt in (1, 2):
+        if not pending:
+            break
+
+        for center in pending:
+            input_controller.alt_click_window_point(GAME_HWND, center[0], center[1], label=f"{action}_item:{location}")
+
+        input_controller.rest_mouse(GAME_HWND, reason=f"{action}_items_done:{location}")
+        clicked = pending
+        _all_done, screenshot = wait_for_screen(
+            lambda s: all(item_is_locked(s, c) == lock for c in clicked), 0.5
+        )
+        pending = [c for c in clicked if item_is_locked(screenshot, c) != lock]
 
     if targets:
-        screenshot = capture_window(GAME_HWND)
-        failed = [c for c in targets if item_is_locked(screenshot, c) != lock]
         write_log(
-            f"{action.title()}ed items | location={location} | done={len(targets) - len(failed)} | "
-            f"failed={failed or 'none'}"
+            f"{action.title()}ed items | location={location} | done={len(targets) - len(pending)} | "
+            f"failed={pending or 'none'}"
         )
 
     return len(targets)
@@ -3707,11 +3966,8 @@ def set_protected_items_locked(location, find_centers, lock):
 def for_each_stash_tab(action):
     """Open stash tabs 1-4 in turn and run action(stash_name) on each."""
     for stash_name in get_stash_stack_pages():
-        if not click_stash_page_tab(GAME_HWND, capture_window(GAME_HWND), stash_name):
-            continue
-
-        time.sleep(STASH_SWITCH_WAIT_SECONDS)
-        action(stash_name)
+        if click_stash_page_tab(GAME_HWND, capture_window(GAME_HWND), stash_name):
+            action(stash_name)
 
 
 def set_all_protected_items_locked(lock):
@@ -3728,9 +3984,21 @@ def click_button(template_path, label):
         write_log(f"Button not found | button={label} | template={template_path}")
         return False
 
-    click_window_point(GAME_HWND, *center, label=label)
-    time.sleep(config_non_negative_float("post_storage_click_wait_seconds", 0.8))
-    return True
+    return click_window_point(GAME_HWND, *center, label=label, settle_seconds=0)
+
+
+def wait_for_items_to_move(find_centers, before, timeout=1.0):
+    """
+    After Take All or Stash All, watch the grid until its item count has changed and
+    holds for one more look. Returns the last screenshot.
+    """
+    counts = []
+
+    def settled(screenshot):
+        counts.append(count_items(screenshot, find_centers))
+        return len(counts) > 1 and counts[-1] != before and counts[-1] == counts[-2]
+
+    return wait_for_screen(settled, timeout)[1]
 
 
 def sort_stash_tab(stash_name):
@@ -3740,44 +4008,94 @@ def sort_stash_tab(stash_name):
         write_log(f"Stash sort skipped: sort button not found | stash={stash_name}")
         return
 
-    click_window_point(GAME_HWND, *sort_button["center"], label=f"stash_sort:{stash_name}")
+    click_window_point(GAME_HWND, *sort_button["center"], label=f"stash_sort:{stash_name}", settle_seconds=0)
     time.sleep(POST_STASH_SORT_WAIT_SECONDS)
 
 
-def tidy_stash_after_synthesis(stash_all_template):
+def tidy_stash_after_synthesis():
     """
-    After a synthesis, sort the stash as a whole: unlock the protected items and Take All
-    from stash tabs 1-4 into the backpack (it holds about 100 items, far more than the 21
-    slots it shows), sort the backpack, then Stash All onto tabs 1-4 in order, locking the
-    protected grades on each tab once it is filled.
+    After a synthesis, sort the stash as a whole:
+    1. on each of stash tabs 1-4, unlock the protected items and Take All into the backpack
+       (it holds 104 items, far more than the 21 slots it shows);
+    2. sort the backpack, which also packs its items at the top, and Stash All onto the next
+       tab, locking the protected grades there; repeat until the backpack's top is empty.
+    Locks below the protected grades are the player's own and stay. Empty tabs get no Take
+    All, and once the backpack is full the remaining tabs are left as they are.
     """
     write_log("Tidying the stash after Cube synthesis: take all, sort the backpack, stash and lock again")
-    tabs_with_items_left = set()
+    pages = get_stash_stack_pages()
+    # Tabs Take All couldn't empty because the backpack was full (their protected items
+    # are unlocked now), and tabs left alone after that.
+    unsorted_tabs = set()
+    untouched_tabs = set()
+    backpack_full = False
+    scroll_backpack_to_top()
+    set_protected_items_locked("backpack", backpack_grid_centers, False)
 
-    def take_all(stash_name):
-        set_protected_items_locked(stash_name, stash_grid_centers, False)
-        click_button(STASH_TAKE_ALL_TEMPLATE_PATH, f"stash_take_all:{stash_name}")
+    for stash_name in pages:
+        if backpack_full:
+            untouched_tabs.add(stash_name)
+            continue
+
+        if not click_stash_page_tab(GAME_HWND, capture_window(GAME_HWND), stash_name):
+            continue
+
         screenshot = capture_window(GAME_HWND)
-        left = sum(item_grade(screenshot, c) is not None for c in stash_grid_centers(screenshot))
-        write_log(f"Take All from the stash tab | stash={stash_name} | items_left={left}")
+        before = count_items(screenshot, stash_grid_centers)
 
-        if left:
-            tabs_with_items_left.add(stash_name)
+        if before == 0:
+            continue
 
-    def stash_all(stash_name):
-        click_backpack_to_storage_button(capture_window(GAME_HWND), stash_all_template, f"tidy:{stash_name}")
+        set_protected_items_locked(stash_name, stash_grid_centers, False)
 
-        if stash_name in tabs_with_items_left:
+        if click_button(STASH_TAKE_ALL_TEMPLATE_PATH, f"stash_take_all:{stash_name}"):
+            screenshot = wait_for_items_to_move(stash_grid_centers, before)
+
+        left = [c for c in stash_grid_centers(screenshot) if item_grade(screenshot, c) is not None]
+        write_log(f"Take All from the stash tab | stash={stash_name} | items_left={len(left)}")
+
+        # Take All leaves locked items behind; an unlocked one left means the backpack is full.
+        if any(not item_is_locked(screenshot, c) for c in left):
+            unsorted_tabs.add(stash_name)
+            backpack_full = True
+
+    backpack_has_items = True
+
+    for stash_name in pages:
+        if backpack_has_items:
+            # Stash All leaves gaps where it took items; sorting packs the rest at the top.
+            sort_backpack()
+            backpack_has_items = count_items(capture_window(GAME_HWND), backpack_grid_centers) > 0
+            write_log(f"Tidy | backpack sorted before {stash_name} | items_left={backpack_has_items}")
+
+        # Once the backpack is empty, only tabs whose items were unlocked still need a visit.
+        if not backpack_has_items and stash_name not in unsorted_tabs:
+            continue
+
+        if not click_stash_page_tab(GAME_HWND, capture_window(GAME_HWND), stash_name):
+            continue
+
+        stashed = False
+
+        if backpack_has_items:
+            before = count_items(capture_window(GAME_HWND), stash_grid_centers)
+            stashed = click_button(BACKPACK_TO_STORAGE_TEMPLATE_PATH, f"tidy_stash_all:{stash_name}")
+
+            if stashed:
+                wait_for_items_to_move(stash_grid_centers, before)
+
+        if stash_name in unsorted_tabs or (stashed and stash_name in untouched_tabs):
             # The backpack filled up before this tab emptied; sort it on its own.
             sort_stash_tab(stash_name)
 
         set_protected_items_locked(stash_name, stash_grid_centers, True)
 
-    set_protected_items_locked("backpack", backpack_grid_centers, False)
-    for_each_stash_tab(take_all)
-    click_button(BACKPACK_SORT_TEMPLATE_PATH, "backpack_sort")
-    for_each_stash_tab(stash_all)
+    if backpack_has_items:
+        # Every tab is full; pack what is left at the top so its protected items get locked.
+        sort_backpack()
+
     set_protected_items_locked("backpack", backpack_grid_centers, True)
+    forget_soulstone_slots("the tidy moved every item")
 
 
 def right_panel_center(screenshot, panel):
@@ -3791,8 +4109,9 @@ def right_panel_center(screenshot, panel):
 
 def switch_right_panel(panel):
     """Show the Cube or PORTAL on the right with the HERO panel's round buttons."""
+    screenshot = capture_window(GAME_HWND)
+
     for attempt in (1, 2):
-        screenshot = capture_window(GAME_HWND)
         center = right_panel_center(screenshot, panel)
 
         if center is not None:
@@ -3806,10 +4125,12 @@ def switch_right_panel(panel):
 
         # The first click on an inactive game window may only activate it, hence the retry.
         dx, dy = HERO_PANEL_BUTTON_OFFSETS[panel]
-        click_window_point(GAME_HWND, hero[0] + dx, hero[1] + dy, label=f"open_{panel}_panel_{attempt}")
-        time.sleep(1.0)
+        click_window_point(
+            GAME_HWND, hero[0] + dx, hero[1] + dy, label=f"open_{panel}_panel_{attempt}", settle_seconds=0
+        )
+        _shown, screenshot = wait_for_screen(lambda s: right_panel_center(s, panel) is not None, 1.5)
 
-    center = right_panel_center(capture_window(GAME_HWND), panel)
+    center = right_panel_center(screenshot, panel)
 
     if center is None:
         write_log(f"Panel switch failed | panel={panel}")
@@ -3823,8 +4144,9 @@ def cube_point(cube, name):
 
 
 def cube_click(cube, name):
+    """Click a Cube control; callers watch the screen for the effect instead of a fixed wait."""
     x, y = cube_point(cube, name)
-    return click_window_point(GAME_HWND, x, y, label=f"cube_{name}")
+    return click_window_point(GAME_HWND, x, y, label=f"cube_{name}", settle_seconds=0)
 
 
 def cube_shows(screenshot, cube, template_path, near):
@@ -3856,18 +4178,7 @@ def cube_box_ticked(screenshot, cube, name):
 
 def wait_for_cube_label(cube, template_path, near, timeout=2.0):
     """Re-check a Cube label until it shows; it fades in after the panel opens or a pick."""
-    started = time.time()
-
-    while True:
-        screenshot = capture_window(GAME_HWND)
-
-        if cube_shows(screenshot, cube, template_path, near):
-            return True, screenshot
-
-        if time.time() - started >= timeout:
-            return False, screenshot
-
-        time.sleep(0.25)
+    return wait_for_screen(lambda s: cube_shows(s, cube, template_path, near), timeout)
 
 
 def choose_cube_option(cube, label_path, dropdown, option):
@@ -3892,9 +4203,8 @@ def tick_cube_box(cube, box):
         return True
 
     cube_click(cube, box)
-    time.sleep(0.5)
 
-    if not cube_box_ticked(capture_window(GAME_HWND), cube, box):
+    if not wait_for_screen(lambda s: cube_box_ticked(s, cube, box), 1.0)[0]:
         write_log(f"Cube setup failed | could not tick {box}")
         return False
 
@@ -3908,12 +4218,68 @@ def prepare_cube(cube):
     ) and tick_cube_box(cube, "include_stash_box")
 
 
+def cube_grid_centers(cube):
+    return [(cube[0] + dx, cube[1] + dy) for dy in CUBE_GRID_ROWS for dx in CUBE_GRID_COLUMNS]
+
+
 def read_cube_grid(screenshot, cube):
-    return [
-        item_grade(screenshot, (cube[0] + dx, cube[1] + dy))
-        for dy in CUBE_GRID_ROWS
-        for dx in CUBE_GRID_COLUMNS
-    ]
+    return [item_grade(screenshot, center) for center in cube_grid_centers(cube)]
+
+
+def cube_grid_has_soulstone(screenshot, cube):
+    icon_templates = load_soulstone_icon_templates()
+    return any(slot_has_soulstone(screenshot, center, icon_templates) for center in cube_grid_centers(cube))
+
+
+def wait_for_cube_grid(cube, condition, timeout):
+    """
+    Read the Cube grid until condition(grids read so far) is true or the timeout passes.
+    Returns (condition_met, last_grid, last_screenshot).
+    """
+    grids = []
+
+    def check(screenshot):
+        grids.append(read_cube_grid(screenshot, cube))
+        return condition(grids)
+
+    met, screenshot = wait_for_screen(check, timeout)
+    return met, grids[-1] if grids else [None] * 9, screenshot
+
+
+def grid_full_and_steady(grids):
+    return len(grids) > 1 and all(grids[-1]) and grids[-1] == grids[-2]
+
+
+def grid_shows_result(input_grade):
+    """
+    Condition for wait_for_cube_grid: only the middle cell holds an item, and it isn't one
+    of the 9 inputs (the result is a grade higher), on two reads in a row.
+    """
+    def shows_result(grid):
+        middle = grid[CUBE_RESULT_CELL]
+        others = [grade for i, grade in enumerate(grid) if i != CUBE_RESULT_CELL]
+        return middle is not None and middle != input_grade and not any(others)
+
+    return lambda grids: len(grids) > 1 and shows_result(grids[-1]) and shows_result(grids[-2])
+
+
+def grid_empty(grids):
+    return not any(grids[-1])
+
+
+def cube_category_selected(screenshot, cube, category):
+    return cube_shows(screenshot, cube, CUBE_FILL_ICON_TEMPLATE_PATHS[category], "auto_fill_icon")
+
+
+def select_cube_category(cube, category):
+    """Pick the Auto Fill category from its menu, unless the button already shows it."""
+    if cube_category_selected(capture_window(GAME_HWND), cube, category):
+        return True
+
+    cube_click(cube, "auto_fill_menu")
+    time.sleep(0.5)
+    cube_click(cube, category)
+    return wait_for_screen(lambda s: cube_category_selected(s, cube, category), 1.0)[0]
 
 
 def synthesize_category(cube, category):
@@ -3921,16 +4287,11 @@ def synthesize_category(cube, category):
     Auto Fill one category and synthesize while it fills 9 items of one grade below
     LOCKED_FROM_GRADE. Anything else is returned to the inventory unsynthesized.
     """
-    cube_click(cube, "auto_fill_menu")
-    time.sleep(0.6)
-    cube_click(cube, category)
-    time.sleep(0.6)
-
-    if not cube_shows(capture_window(GAME_HWND), cube, CUBE_FILL_ICON_TEMPLATE_PATHS[category], "auto_fill_icon"):
+    if not select_cube_category(cube, category):
         write_log(f"Cube synthesis skipped: Auto Fill category not selected | category={category}")
         return 0
 
-    # The level range and Fixed Level are greyed out unless equipment is selected.
+    # The level range and Fixed Level are greyed out for materials.
     if category in LEVEL_RANGE_CATEGORIES and not (
         choose_cube_option(cube, CUBE_LEVEL_80_90_TEMPLATE_PATH, "level_dropdown", "level_80_90")
         and tick_cube_box(cube, "fixed_level_box")
@@ -3941,34 +4302,38 @@ def synthesize_category(cube, category):
 
     for _ in range(AUTO_SYNTHESIS_MAX_ROUNDS):
         cube_click(cube, "auto_fill")
-        time.sleep(1.0)
-        filled = [grade for grade in read_cube_grid(capture_window(GAME_HWND), cube) if grade]
+        # A full grid counts as soon as it holds still; a short fill is read at the timeout.
+        _full, grid, screenshot = wait_for_cube_grid(cube, grid_full_and_steady, 1.0)
+        filled = [grade for grade in grid if grade]
+        synthesizable = len(filled) == 9 and len(set(filled)) == 1 and not grade_is_protected(filled[0])
 
-        if len(filled) == 9 and len(set(filled)) == 1 and not grade_is_protected(filled[0]):
+        # Soulstones are never locked (boss runs need them), so Auto Fill may pull one in.
+        if synthesizable and cube_grid_has_soulstone(screenshot, cube):
+            write_log(f"Cube synthesis refused: a soulstone is in the grid | category={category}")
+            synthesizable = False
+
+        if synthesizable:
             cube_click(cube, "synthesize")
-            time.sleep(1.5)
-            screenshot = capture_window(GAME_HWND)
-            grid = read_cube_grid(screenshot, cube)
+            # A finished synthesis leaves its one result in the middle cell.
+            done, grid, screenshot = wait_for_cube_grid(cube, grid_shows_result(filled[0]), 3.0)
             result = grid[CUBE_RESULT_CELL]
 
-            # A finished synthesis leaves its one result in the middle cell.
-            if result is None or any(grade for i, grade in enumerate(grid) if i != CUBE_RESULT_CELL):
+            if not done:
                 cv2.imwrite(os.path.join(get_debug_dir(), "cube_after_synthesize.png"), screenshot)
                 write_log(
                     f"Cube synthesis stopped: unexpected grid after synthesize | category={category} | "
                     f"grid={grid} | saved=cube_after_synthesize.png"
                 )
                 cube_click(cube, "return_items")
-                time.sleep(0.8)
+                wait_for_cube_grid(cube, grid_empty, 1.5)
                 break
 
             synthesized += 1
             write_log(f"Cube synthesis | category={category} | 9 x {filled[0]} -> 1 x {result}")
             # Move the result into the inventory before the next Auto Fill.
             cube_click(cube, "return_items")
-            time.sleep(0.8)
 
-            if any(read_cube_grid(capture_window(GAME_HWND), cube)):
+            if not wait_for_cube_grid(cube, grid_empty, 1.5)[0]:
                 write_log(f"Cube synthesis stopped: result could not be taken out | category={category}")
                 break
 
@@ -3976,7 +4341,7 @@ def synthesize_category(cube, category):
 
         if filled:
             cube_click(cube, "return_items")
-            time.sleep(0.8)
+            wait_for_cube_grid(cube, grid_empty, 1.5)
 
         write_log(
             f"Cube synthesis done for category | category={category} | synthesized={synthesized} | "
@@ -3987,33 +4352,65 @@ def synthesize_category(cube, category):
     return synthesized
 
 
-def run_auto_synthesis_if_inventory_full(context):
+def auto_synthesis_active():
+    return AUTO_SYNTHESIS_ENABLED and not input_controller.use_background_input
+
+
+def run_auto_synthesis_if_inventory_full(context, stash_tabs_locked=False):
     """
     When the backpack is full, lock the protected grades, then synthesize Equipment and
     Accessories (Lv.80~90) and Materials in the Cube, each until Auto Fill can't make a
-    full set, and switch the right panel back to PORTAL.
+    full set, and switch the right panel back to PORTAL. stash_tabs_locked means the stash
+    pass just before already locked the protected items on tabs 1-4.
     Returns True when anything was synthesized.
     """
-    if not AUTO_SYNTHESIS_ENABLED or input_controller.use_background_input:
+    global last_empty_synthesis_at
+
+    if not auto_synthesis_active():
         return False
+
+    if last_empty_synthesis_at is not None:
+        retry_in = AUTO_SYNTHESIS_RETRY_MINUTES * 60 - (time.time() - last_empty_synthesis_at)
+
+        if retry_in > 0:
+            write_log(
+                f"Cube synthesis check skipped: the last run found nothing to synthesize | "
+                f"retry_in={retry_in:.0f}s | context={context}"
+            )
+            return False
+
+    scroll_backpack_to_top()
 
     if not backpack_is_full(capture_window(GAME_HWND)):
         return False
 
     write_log(f"Inventory full; running Cube synthesis | context={context}")
-    set_all_protected_items_locked(True)
+
+    if stash_tabs_locked:
+        set_protected_items_locked("backpack", backpack_grid_centers, True)
+    else:
+        set_all_protected_items_locked(True)
+
     synthesized = 0
     cube = switch_right_panel("cube")
 
     try:
         if cube is not None and prepare_cube(cube):
-            for category in AUTO_SYNTHESIS_CATEGORIES:
+            # Start with the category Auto Fill already shows; that saves opening its menu.
+            screenshot = capture_window(GAME_HWND)
+            categories = sorted(
+                AUTO_SYNTHESIS_CATEGORIES,
+                key=lambda category: not cube_category_selected(screenshot, cube, category),
+            )
+
+            for category in categories:
                 synthesized += synthesize_category(cube, category)
     finally:
         if switch_right_panel("portal") is None:
             write_log("WARNING: could not switch the right panel back to PORTAL")
         input_controller.rest_mouse(GAME_HWND, reason="cube_synthesis_done")
 
+    last_empty_synthesis_at = None if synthesized else time.time()
     write_log(f"Cube synthesis finished | synthesized={synthesized} | context={context}")
     return synthesized > 0
 
@@ -4030,10 +4427,12 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
         return False
 
     transferred = transfer_backpack_to_storage(template, context)
+    # A stack pass that stashed on every tab also locked the protected loot there.
+    stash_tabs_locked = STACK_STASH_AFTER_TRANSFER and transferred
 
-    if run_auto_synthesis_if_inventory_full(context):
+    if run_auto_synthesis_if_inventory_full(context, stash_tabs_locked):
         # Synthesis freed stash space; sort the stash and the backpack together into it.
-        tidy_stash_after_synthesis(template)
+        tidy_stash_after_synthesis()
 
     return transferred
 
@@ -4096,7 +4495,7 @@ def click_backpack_to_storage_button(screenshot, template, context):
         f"confidence={confidence:.2f} | center=({local_x}, {local_y}) | context={context}"
     )
 
-    click_ok = click_window_point(GAME_HWND, local_x, local_y, label="backpack_to_storage")
+    click_ok = click_window_point(GAME_HWND, local_x, local_y, label="backpack_to_storage", settle_seconds=0)
 
     if not click_ok:
         write_log(f"Backpack-to-storage click failed safely | context={context}")
@@ -4211,8 +4610,8 @@ def click_blue_chest_once(hwnd, detections):
     nearest_brown_left = None
 
     for brown in brown_detections:
-        brown_center_x, brown_center_y = brown["center_full"]
-        brown_w, brown_h = brown["size"]
+        brown_center_x, _brown_center_y = brown["center_full"]
+        brown_w, _brown_h = brown["size"]
 
         brown_left = brown_center_x - brown_w // 2
 
@@ -4223,8 +4622,8 @@ def click_blue_chest_once(hwnd, detections):
                 nearest_brown_on_right = brown
 
     if nearest_brown_on_right is not None:
-        brown_center_x, brown_center_y = nearest_brown_on_right["center_full"]
-        brown_w, brown_h = nearest_brown_on_right["size"]
+        brown_center_x, _brown_center_y = nearest_brown_on_right["center_full"]
+        brown_w, _brown_h = nearest_brown_on_right["size"]
 
         brown_left = brown_center_x - brown_w // 2
 
@@ -4565,7 +4964,15 @@ def resolve_legacy_map_scroll_focus(hwnd, reason, label="scroll"):
     }
 
 
-def click_window_point(hwnd, local_x, local_y, label="", coordinate_space="screenshot", button="left"):
+def click_window_point(
+    hwnd,
+    local_x,
+    local_y,
+    label="",
+    coordinate_space="screenshot",
+    button="left",
+    settle_seconds=None,
+):
     return input_controller.click_window_point(
         hwnd,
         local_x,
@@ -4573,7 +4980,27 @@ def click_window_point(hwnd, local_x, local_y, label="", coordinate_space="scree
         label=label,
         coordinate_space=coordinate_space,
         button=button,
+        settle_seconds=settle_seconds,
     )
+
+
+def wait_for_screen(condition, timeout, interval=0.1):
+    """
+    Capture the game until condition(screenshot) is true or the timeout passes.
+    Returns (condition_met, last_screenshot).
+    """
+    started = time.time()
+
+    while True:
+        screenshot = capture_window(GAME_HWND)
+
+        if screenshot is not None and condition(screenshot):
+            return True, screenshot
+
+        if time.time() - started >= timeout:
+            return False, screenshot
+
+        time.sleep(interval)
     
 def scroll_map(hwnd, direction, repeat=None, route=None):
     """
@@ -6890,6 +7317,28 @@ def recover_navigation_hierarchy(hwnd, route, reason):
     return True
 
 
+def game_is_on_stage(route):
+    """
+    True when the route's stage is the game's current one (the green, flagged stage).
+    Choosing the difficulty and act and scrolling the map to look don't press a stage.
+    """
+    if not select_difficulty_and_chapter(GAME_HWND, route):
+        return False
+
+    found = find_current_stage_in_open_act(GAME_HWND)
+
+    if found is None:
+        return False
+
+    img, dot = found
+    level, confidence = read_stage_label_next_to_dot(img, dot, route["chapter"])
+    write_log(
+        f"Current stage check | current={level or 'label not read'} | target={route['level']} | "
+        f"label_confidence={confidence:.2f}"
+    )
+    return level == route["level"]
+
+
 def navigate_to_current_route_if_enabled(activate_boss_gate=False):
     global bot_state
 
@@ -6910,6 +7359,21 @@ def navigate_to_current_route_if_enabled(activate_boss_gate=False):
         f"Starting route navigation | "
         f"target={route['difficulty']} | {route['chapter']} | {route['level']}"
     )
+
+    # Pressing the stage the game is already on restarts its progress, so look first.
+    if game_is_on_stage(route):
+        write_log(
+            f"Already on the route's stage; not pressing it again | "
+            f"target={route['difficulty']} | {route['chapter']} | {route['level']}"
+        )
+        reset_consecutive_navigation_skips("already_on_route_stage")
+        reset_route_navigation_retries("already_on_route_stage")
+
+        if activate_boss_gate:
+            reset_route_detection_memory()
+            bot_state = STATE_LOOK_FOR_BOSS
+
+        return True
 
     selected = select_difficulty_and_chapter(GAME_HWND, route)
 

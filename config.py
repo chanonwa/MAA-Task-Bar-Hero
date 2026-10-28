@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 
-APP_VERSION = "1.5"
+APP_VERSION = "1.5.1"
 _CONFIG_LOAD_MESSAGES = []
 _CONFIG_LOAD_MESSAGES_EMITTED = False
 
@@ -154,10 +154,12 @@ DEFAULT_CONFIG = {
         "normal": "templates/general/soulstone_title_normal.png",
     },
     "act_boss_fight_timeout_seconds": 300.0,
+    "act_boss_return_timeout_seconds": 20.0,
     "act_boss_max_attempts": 1,
     "act_boss_use_all_soulstones": False,
     "auto_synthesis_enabled": False,
     "auto_synthesis_up_to_grade": "arcana",
+    "auto_synthesis_retry_minutes": 10,
     "non_blue_box_click_cooldown_seconds": 1.0,
     "recover_orphan_blue_chest_before_boss": True,
     "orphan_blue_chest_confirm_cycles": 2,
