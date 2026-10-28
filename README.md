@@ -6,7 +6,7 @@ This is [chanonwa](https://github.com/chanonwa)'s extended version of [Marcus-Xu
 
 ## What's new
 
-Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases)**; the latest is [1.5.1](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases/tag/v1.5.1).
+Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases)**; the latest is [1.5.2](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases/tag/v1.5.2).
 
 ## Download and run
 
@@ -32,7 +32,7 @@ In the GUI, add stages to the farming cycle, tick the options you want, and pres
 
 **"MAA Task Bar Hero is already open."** Only one copy can run at a time, so two copies can't fight over the game. Use the window that's already open; the message brings it to the front.
 
-**The bot doesn't click the game.** Keep *Background input mode* off. The game ignores clicks that don't come from the real mouse.
+**The bot doesn't click the game.** Make sure the game window isn't minimized or covered. The game only takes clicks from the real mouse, so the bot can't run in the background.
 
 **The bot can't find a stage.** Check the zoom is 1x and the PORTAL window is open. A stage marked `[Unavailable]` is missing its template in `templates/levels/`.
 

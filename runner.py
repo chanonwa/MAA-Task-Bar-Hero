@@ -235,7 +235,6 @@ def get_debug_dir():
 
 ##Parameters For Test Purpose##
 WINDOW_KEYWORD = "TaskBarHero"
-USE_BACKGROUND_INPUT = os.environ.get("MAATBH_INPUT_MODE", "foreground").lower() == "background"    
 ENABLE_CLICKING = False
 AUTO_OPEN_CONFIRMED_BLUE_CHEST = env_flag("MAATBH_AUTO_OPEN_BLUE", True)
 SHOW_PREVIEW = env_flag("MAATBH_SHOW_PREVIEW", False)
@@ -505,7 +504,7 @@ ASSUME_MAILBOX_AFTER_MAX_TRIALS = config_bool("assume_mailbox_after_max_trials",
 STOP_IF_BLUE_CHEST_FOUND = config_bool("stop_if_blue_chest_found", True)
 REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST = env_flag(
     "MAATBH_REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST",
-    config_bool("repeat_same_level_after_blue_chest", False),
+    config_bool("repeat_same_level_after_blue_chest", True),
 )
 OPEN_ALL_BOXES_ON_SAME_LEVEL = config_bool("open_all_boxes_on_same_level", True)
 # With the Rune of Opening, Space opens every queued chest of every type at once.
@@ -3138,7 +3137,7 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
             else:
                 completed = False
 
-            if auto_synthesis_active():
+            if AUTO_SYNTHESIS_ENABLED:
                 # Lock protected loot as it is stashed, so the Cube's Auto Fill never takes it
                 # and a synthesis run doesn't have to visit every tab first.
                 set_protected_items_locked(stash_name, stash_grid_centers, True)
@@ -4352,10 +4351,6 @@ def synthesize_category(cube, category):
     return synthesized
 
 
-def auto_synthesis_active():
-    return AUTO_SYNTHESIS_ENABLED and not input_controller.use_background_input
-
-
 def run_auto_synthesis_if_inventory_full(context, stash_tabs_locked=False):
     """
     When the backpack is full, lock the protected grades, then synthesize Equipment and
@@ -4366,7 +4361,7 @@ def run_auto_synthesis_if_inventory_full(context, stash_tabs_locked=False):
     """
     global last_empty_synthesis_at
 
-    if not auto_synthesis_active():
+    if not AUTO_SYNTHESIS_ENABLED:
         return False
 
     if last_empty_synthesis_at is not None:
@@ -4510,7 +4505,7 @@ def click_backpack_to_storage_button(screenshot, template, context):
 def blue_chest_storage_enabled():
     return env_flag(
         "MAATBH_MOVE_TO_STORAGE",
-        config_bool("move_backpack_to_storage_after_blue_chest", False)
+        config_bool("move_backpack_to_storage_after_blue_chest", True)
     )
 
 
@@ -4729,7 +4724,6 @@ input_controller = InputController(
     get_config=get_config,
     get_game_hwnd=lambda: GAME_HWND,
     regions=REGIONS,
-    use_background_input=USE_BACKGROUND_INPUT,
     nav_click_delay_seconds=NAV_CLICK_DELAY_SECONDS,
     map_scroll_chunk_repeat=MAP_SCROLL_CHUNK_REPEAT,
     fast_scroll_use_burst=FAST_SCROLL_USE_BURST,
@@ -7941,7 +7935,7 @@ def main():
     global freeze_start_time
     initialize_startup_runtime()
     get_config()
-    input_mode = "background PostMessage" if USE_BACKGROUND_INPUT else "foreground mouse"
+    input_mode = "foreground mouse"
     log_session_start_marker(input_mode)
     log_cycle_start_marker()
     hwnd, title = find_window_by_title_keyword(WINDOW_KEYWORD)

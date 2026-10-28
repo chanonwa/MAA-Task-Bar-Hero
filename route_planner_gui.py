@@ -205,12 +205,6 @@ class RoutePlannerApp:
         self.last_navigation_failure_warning = ""
         self.notified_warning_keys = set()
         self.status_var = tk.StringVar(value="Ready: choose routes, then save and start the bot.")
-        self.background_input_var = tk.BooleanVar(value=False)
-        # One checkbox covers blue and brown/other chests; the bot still reads both config keys.
-        self.move_to_storage_var = tk.BooleanVar(
-            value=config_bool_value("move_backpack_to_storage_after_blue_chest", False)
-            or config_bool_value("move_backpack_to_storage_after_non_blue_box", True)
-        )
         self.stack_stash_var = tk.BooleanVar(
             value=config_bool_value("stack_stash_after_transfer", True)
         )
@@ -228,9 +222,6 @@ class RoutePlannerApp:
             value=config_bool_value("auto_synthesis_enabled", False)
         )
         self.synthesis_cap_var = tk.StringVar(value=get_synthesis_cap_grade().title())
-        self.repeat_same_level_var = tk.BooleanVar(
-            value=config_bool_value("repeat_same_level_after_blue_chest", False)
-        )
         self.same_tier_substitution_var = tk.BooleanVar(
             value=config_bool_value("same_tier_substitution_enabled", True)
         )
@@ -378,15 +369,12 @@ class RoutePlannerApp:
         options.grid(row=1, column=2, rowspan=2, columnspan=3, sticky="nw", padx=(0, 10), pady=(6, 4))
         option_columns = (
             (
-                ("Move backpack items to storage", self.move_to_storage_var),
                 ("I own the Rune of Opening (Space opens all chests)", self.rune_of_opening_var),
                 ("Boss run (use soulstones on act bosses after a blue chest)", self.use_soulstones_var),
             ),
             (
-                ("Repeat the same level after a blue chest", self.repeat_same_level_var),
                 ("Try same-tier substitute when route navigation fails", self.same_tier_substitution_var),
                 ("Stash All on stash tabs 1-4 in order (stacks items)", self.stack_stash_var),
-                ("Background input mode (in development)", self.background_input_var),
             ),
         )
 
@@ -783,9 +771,6 @@ class RoutePlannerApp:
 
         config["recognition_mode"] = GUI_RECOGNITION_MODE
         config["same_tier_substitution_enabled"] = bool(self.same_tier_substitution_var.get())
-        config["repeat_same_level_after_blue_chest"] = bool(self.repeat_same_level_var.get())
-        config["move_backpack_to_storage_after_blue_chest"] = bool(self.move_to_storage_var.get())
-        config["move_backpack_to_storage_after_non_blue_box"] = bool(self.move_to_storage_var.get())
         config["stack_stash_after_transfer"] = bool(self.stack_stash_var.get())
         config["has_rune_of_opening"] = bool(self.rune_of_opening_var.get())
         config["use_soulstones_for_act_bosses"] = bool(self.use_soulstones_var.get())
@@ -985,17 +970,15 @@ class RoutePlannerApp:
 
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             env = os.environ.copy()
-            input_mode = "background" if self.background_input_var.get() else "foreground"
-            env["MAATBH_INPUT_MODE"] = input_mode
+            # Fixed settings: loot is always stashed (boss runs and Cube synthesis rely on
+            # it), and a blue chest repeats the same stage.
             env["MAATBH_SHOW_PREVIEW"] = "0"
             env["MAATBH_ENABLE_BEEP"] = "0"
             env["MAATBH_AUTO_OPEN_BLUE"] = "1"
             env["MAATBH_NAVIGATE_ON_START"] = "1"
-            env["MAATBH_MOVE_TO_STORAGE"] = "1" if self.move_to_storage_var.get() else "0"
-            env["MAATBH_MOVE_TO_STORAGE_AFTER_NON_BLUE_BOX"] = env["MAATBH_MOVE_TO_STORAGE"]
-            env["MAATBH_REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST"] = (
-                "1" if self.repeat_same_level_var.get() else "0"
-            )
+            env["MAATBH_MOVE_TO_STORAGE"] = "1"
+            env["MAATBH_MOVE_TO_STORAGE_AFTER_NON_BLUE_BOX"] = "1"
+            env["MAATBH_REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST"] = "1"
             env["MAATBH_STACK_STASH_AFTER_TRANSFER"] = "1" if self.stack_stash_var.get() else "0"
             env["MAATBH_HAS_RUNE_OF_OPENING"] = "1" if self.rune_of_opening_var.get() else "0"
             env["MAATBH_USE_SOULSTONES"] = "1" if self.use_soulstones_var.get() else "0"
@@ -1005,14 +988,7 @@ class RoutePlannerApp:
             env["MAATBH_AUTO_SYNTHESIS_UP_TO"] = get_synthesis_cap_grade(self.synthesis_cap_var.get())
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
-            self.write_bot_console_log(f"=== Input mode: {input_mode} ===\n")
             self.write_bot_console_log(f"=== Recognition mode: {GUI_RECOGNITION_MODE} ===\n")
-            self.write_bot_console_log(
-                f"=== Move backpack to storage: {'on' if self.move_to_storage_var.get() else 'off'} ===\n"
-            )
-            self.write_bot_console_log(
-                f"=== Repeat same level after blue chest: {'on' if self.repeat_same_level_var.get() else 'off'} ===\n"
-            )
             self.write_bot_console_log(
                 f"=== Stack stash pages after transfer: {'on' if self.stack_stash_var.get() else 'off'} ===\n"
             )
@@ -1049,10 +1025,7 @@ class RoutePlannerApp:
             )
             if self.bot_process.stdin is not None:
                 self.bot_process.stdin.close()
-            if input_mode == "background":
-                self.status_var.set("Bot started: experimental background input mode. Disable this if the game does not respond.")
-            else:
-                self.status_var.set("Bot started: foreground mouse mode.")
+            self.status_var.set("Bot started.")
         except Exception as e:
             self.close_bot_log_handle()
             self.bot_process = None

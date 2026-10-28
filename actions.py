@@ -11,11 +11,6 @@ import win32con
 import win32gui
 
 
-# Keys press_window_key can post in background input mode.
-BACKGROUND_KEY_CODES = {
-    "space": win32con.VK_SPACE,
-}
-
 # How long a found mouse rest point is trusted before it is looked up again.
 REST_POINT_CACHE_SECONDS = 30.0
 # A cursor this close to the rest point counts as already resting there.
@@ -43,7 +38,6 @@ class InputController:
         get_config,
         get_game_hwnd,
         regions,
-        use_background_input,
         nav_click_delay_seconds,
         map_scroll_chunk_repeat,
         fast_scroll_use_burst,
@@ -75,7 +69,6 @@ class InputController:
         self.get_config = get_config
         self.get_game_hwnd = get_game_hwnd
         self.regions = regions
-        self.use_background_input = use_background_input
         self.nav_click_delay_seconds = nav_click_delay_seconds
         self.map_scroll_chunk_repeat = map_scroll_chunk_repeat
         self.fast_scroll_use_burst = fast_scroll_use_burst
@@ -129,12 +122,6 @@ class InputController:
         except Exception as e:
             self.write_log(f"{warning_message}: {e}")
             return False
-
-    def make_lparam(self, x, y):
-        """
-        Pack x, y into a Win32 LPARAM.
-        """
-        return (y << 16) | (x & 0xFFFF)
 
     def local_to_screen(self, hwnd, local_x, local_y):
         """
@@ -439,11 +426,10 @@ class InputController:
         """
         Rest the cursor on the HERO title using real move events, so the game
         closes whatever tooltip the last click or hover opened. Returns True
-        when the cursor is resting there. Foreground input only.
+        when the cursor is resting there.
         """
         if (
-            self.use_background_input
-            or not self.mouse_parking_enabled
+            not self.mouse_parking_enabled
             or self.mouse_parking_mode == "disabled"
             or hwnd is None
         ):
@@ -506,11 +492,8 @@ class InputController:
     def wheel_at_window_point(self, hwnd, local_x, local_y, notches, label="wheel"):
         """
         Turn the mouse wheel over a point (positive notches scroll up) with real input,
-        then rest the mouse. Foreground input only.
+        then rest the mouse.
         """
-        if self.use_background_input:
-            return False
-
         _client_x, _client_y, screen_x, screen_y, _scaling = self.screenshot_local_to_click_coordinates(
             hwnd,
             local_x,
@@ -785,83 +768,12 @@ class InputController:
         time.sleep(self.mouse_parking_wait_seconds)
         return True
 
-    def background_click_window_point(
-        self,
-        hwnd,
-        local_x,
-        local_y,
-        label="",
-        coordinate_space="screenshot",
-        button="left",
-    ):
-        """
-        Send a background click to the game window without moving the real mouse.
-        """
-        if coordinate_space == "screenshot":
-            client_x, client_y, screen_x, screen_y, scaling_status = self.screenshot_local_to_click_coordinates(
-                hwnd,
-                local_x,
-                local_y,
-                label=label,
-            )
-        else:
-            client_x, client_y, screen_x, screen_y = self.local_to_client(hwnd, local_x, local_y)
-            scaling_status = {"active": False, "reason": f"{coordinate_space}_coordinate_space"}
-
-        window_rect = self.safe_window_rect(hwnd)
-        client_origin = self.safe_client_origin(hwnd)
-        lparam = self.make_lparam(client_x, client_y)
-
-        self.write_log(
-            f"Background click | label={label} | button={button} | "
-            f"coordinate_space={coordinate_space} | "
-            f"local=({local_x}, {local_y}) | "
-            f"client=({client_x}, {client_y}) | "
-            f"screen=({screen_x}, {screen_y}) | "
-            f"scaling_active={scaling_status.get('active')} | "
-            f"window_rect={self.format_diag_value(window_rect)} | "
-            f"client_origin={self.format_diag_value(client_origin)}"
-        )
-
-        if button == "right":
-            down_message, down_flag, up_message = win32con.WM_RBUTTONDOWN, win32con.MK_RBUTTON, win32con.WM_RBUTTONUP
-        else:
-            down_message, down_flag, up_message = win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, win32con.WM_LBUTTONUP
-
-        win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-        time.sleep(0.05)
-
-        win32gui.PostMessage(hwnd, down_message, down_flag, lparam)
-        time.sleep(0.08)
-
-        win32gui.PostMessage(hwnd, up_message, 0, lparam)
-        time.sleep(self.nav_click_delay_seconds)
-
-        return True
-
     def press_window_key(self, hwnd, key, label=""):
         """
         Press one key in the game window. The key only goes out once the game is
         confirmed to be the foreground window, so it can never land in another app.
         """
-        self.write_log(
-            f"Press window key | label={label} | key={key} | "
-            f"background_input={self.use_background_input}"
-        )
-
-        if self.use_background_input:
-            virtual_key = BACKGROUND_KEY_CODES.get(key)
-
-            if virtual_key is None:
-                self.write_log(f"Key press failed safely | label={label} | reason=unsupported_background_key:{key}")
-                return False
-
-            win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, virtual_key, 0)
-            time.sleep(0.05)
-            win32gui.PostMessage(hwnd, win32con.WM_KEYUP, virtual_key, 0)
-            time.sleep(self.nav_click_delay_seconds)
-            return True
-
+        self.write_log(f"Press window key | label={label} | key={key}")
         self.focus_window(hwnd)
 
         if win32gui.GetForegroundWindow() != hwnd:
@@ -877,58 +789,6 @@ class InputController:
         time.sleep(self.nav_click_delay_seconds)
         return True
 
-    def background_scroll_window_point(
-        self,
-        hwnd,
-        local_x,
-        local_y,
-        direction,
-        repeat,
-        coordinate_space="legacy_local",
-        source="static",
-    ):
-        """
-        Send background mouse wheel messages to the game window.
-        Does not move the real mouse.
-        """
-        if coordinate_space == "screenshot":
-            client_x, client_y, screen_x, screen_y, scaling_status = self.screenshot_local_to_click_coordinates(
-                hwnd,
-                local_x,
-                local_y,
-                label=f"scroll_map_{direction}",
-            )
-        else:
-            client_x, client_y, screen_x, screen_y = self.local_to_client(hwnd, local_x, local_y)
-            scaling_status = {"active": False, "reason": f"{coordinate_space}_coordinate_space"}
-
-        if direction == "up":
-            wheel_delta = 120
-        else:
-            wheel_delta = -120
-
-        # WM_MOUSEWHEEL uses screen coordinates in lParam.
-        lparam = self.make_lparam(screen_x, screen_y)
-
-        # High word of wParam is wheel delta.
-        wparam = (wheel_delta & 0xFFFF) << 16
-
-        self.write_log(
-            f"Background scroll | direction={direction} | "
-            f"source={source} | coordinate_space={coordinate_space} | "
-            f"local=({local_x}, {local_y}) | "
-            f"client=({client_x}, {client_y}) | "
-            f"screen=({screen_x}, {screen_y}) | "
-            f"scaling_active={scaling_status.get('active')} | repeat={repeat}"
-        )
-
-        for _ in range(repeat):
-            win32gui.PostMessage(hwnd, win32con.WM_MOUSEWHEEL, wparam, lparam)
-            time.sleep(0.04)
-
-        time.sleep(0.5)
-        return True
-
     def click_window_point(
         self,
         hwnd,
@@ -940,21 +800,10 @@ class InputController:
         settle_seconds=None,
     ):
         """
-        Click a point using local captured-window coordinates.
-        Uses either real mouse or background window message depending on settings.
+        Click a point using local captured-window coordinates, with the real mouse.
         settle_seconds overrides the wait after the click (nav_click_delay_seconds);
         callers that watch the screen for the click's effect pass 0.
         """
-        if self.use_background_input:
-            return self.background_click_window_point(
-                hwnd,
-                local_x,
-                local_y,
-                label=label,
-                coordinate_space=coordinate_space,
-                button=button,
-            )
-
         window_rect = win32gui.GetWindowRect(hwnd)
         client_origin = self.safe_client_origin(hwnd)
 
@@ -999,13 +848,9 @@ class InputController:
 
     def alt_click_window_point(self, hwnd, local_x, local_y, label=""):
         """
-        ALT + left click a point (the game's item lock toggle). Foreground input
-        only; ALT is always released, even when the click fails.
+        ALT + left click a point (the game's item lock toggle). ALT is always
+        released, even when the click fails.
         """
-        if self.use_background_input:
-            self.write_log(f"ALT click skipped | label={label} | reason=background_input")
-            return False
-
         _client_x, _client_y, screen_x, screen_y, _scaling = self.screenshot_local_to_click_coordinates(
             hwnd,
             local_x,
@@ -1034,17 +879,6 @@ class InputController:
         local_y = focus["local_y"]
         screen_x = focus["screen_x"]
         screen_y = focus["screen_y"]
-
-        if self.use_background_input:
-            return self.background_scroll_window_point(
-                hwnd,
-                local_x,
-                local_y,
-                direction=direction,
-                repeat=repeat,
-                coordinate_space=focus["coordinate_space"],
-                source=focus["source"],
-            )
 
         self.focus_window(hwnd, warning_message="Window focus warning before scroll")
 
@@ -1126,62 +960,45 @@ class InputController:
         burst_units = max(1, repeat // burst_count)
         remainder = max(0, repeat - (burst_units * burst_count))
 
-        if direction == "up":
-            wheel_unit = 120
-            pyautogui_unit = 8
-        else:
-            wheel_unit = -120
-            pyautogui_unit = -8
+        pyautogui_unit = 8 if direction == "up" else -8
 
         try:
-            if self.use_background_input:
-                lparam = self.make_lparam(screen_x, screen_y)
+            self.focus_window(
+                hwnd,
+                warning_message="Window focus warning before fast scroll",
+                wait_seconds=0.05,
+            )
 
-                for index in range(burst_count):
-                    units = burst_units + (remainder if index == burst_count - 1 else 0)
-                    wheel_delta = wheel_unit * units
-                    wparam = (wheel_delta & 0xFFFF) << 16
-                    win32gui.PostMessage(hwnd, win32con.WM_MOUSEWHEEL, wparam, lparam)
-                    time.sleep(0.01)
+            # Hover the map with real move events; the wheel then scrolls it. There is
+            # no focus click, so a stage under the cursor is never pressed.
+            move_ok = self.hover_screen_point(screen_x, screen_y, label=f"fast_scroll_{direction}")
 
-                method = "background_burst"
-            else:
-                self.focus_window(
-                    hwnd,
-                    warning_message="Window focus warning before fast scroll",
-                    wait_seconds=0.05,
+            if not move_ok and focus["source"] != "static_map_panel":
+                focus = resolve_legacy_focus(
+                    reason=f"dynamic_fast_move_failed:{focus['source']}",
+                    label=f"fast_scroll_{direction}",
                 )
+                local_x = focus["local_x"]
+                local_y = focus["local_y"]
+                screen_x = focus["screen_x"]
+                screen_y = focus["screen_y"]
+                move_ok = self.hover_screen_point(screen_x, screen_y, label=f"fast_scroll_{direction}_fallback")
 
-                # Hover the map with real move events; the wheel then scrolls it. There is
-                # no focus click, so a stage under the cursor is never pressed.
-                move_ok = self.hover_screen_point(screen_x, screen_y, label=f"fast_scroll_{direction}")
+            if not move_ok:
+                return False
 
-                if not move_ok and focus["source"] != "static_map_panel":
-                    focus = resolve_legacy_focus(
-                        reason=f"dynamic_fast_move_failed:{focus['source']}",
-                        label=f"fast_scroll_{direction}",
-                    )
-                    local_x = focus["local_x"]
-                    local_y = focus["local_y"]
-                    screen_x = focus["screen_x"]
-                    screen_y = focus["screen_y"]
-                    move_ok = self.hover_screen_point(screen_x, screen_y, label=f"fast_scroll_{direction}_fallback")
+            time.sleep(0.1)
 
-                if not move_ok:
+            for index in range(burst_count):
+                units = burst_units + (remainder if index == burst_count - 1 else 0)
+                if not self.safe_pyautogui_scroll(
+                    pyautogui_unit * units,
+                    label=f"fast_scroll_{direction}",
+                ):
                     return False
+                time.sleep(0.01)
 
-                time.sleep(0.1)
-
-                for index in range(burst_count):
-                    units = burst_units + (remainder if index == burst_count - 1 else 0)
-                    if not self.safe_pyautogui_scroll(
-                        pyautogui_unit * units,
-                        label=f"fast_scroll_{direction}",
-                    ):
-                        return False
-                    time.sleep(0.01)
-
-                method = "foreground_burst"
+            method = "foreground_burst"
 
         except pyautogui.FailSafeException:
             self.write_log(

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 _CONFIG_LOAD_MESSAGES = []
 _CONFIG_LOAD_MESSAGES_EMITTED = False
 
@@ -164,9 +164,9 @@ DEFAULT_CONFIG = {
     "recover_orphan_blue_chest_before_boss": True,
     "orphan_blue_chest_confirm_cycles": 2,
     "orphan_blue_chest_near_threshold_margin": 0.03,
-    "repeat_same_level_after_blue_chest": False,
+    "repeat_same_level_after_blue_chest": True,
     "assume_mailbox_after_max_trials": True,
-    "move_backpack_to_storage_after_blue_chest": False,
+    "move_backpack_to_storage_after_blue_chest": True,
     "move_backpack_to_storage_after_non_blue_box": True,
     "post_blue_chest_storage_wait_seconds": 0.8,
     "backpack_to_storage_match_threshold": 0.80,
