@@ -225,7 +225,6 @@ class RoutePlannerApp:
         self.same_tier_substitution_var = tk.BooleanVar(
             value=config_bool_value("same_tier_substitution_enabled", True)
         )
-        self.no_chest_retries_var = tk.StringVar(value=str(self.get_default_no_chest_retries()))
         self.difficulty_var = tk.StringVar(value="normal")
         self.difficulty_display_var = tk.StringVar(value=DIFFICULTY_LABELS.get("normal", "Normal"))
 
@@ -276,7 +275,7 @@ class RoutePlannerApp:
         self.plan_listbox = tk.Listbox(planner_frame, width=40, height=16, exportselection=False)
         self.plan_listbox.grid(row=2, column=1, sticky="nsew", padx=(6, 8), pady=(4, 4))
 
-        # All six route buttons on one row under the lists, so no button column
+        # The route buttons sit on one row under the lists, so no button column
         # sits between them and the window can be narrower.
         button_frame = tk.Frame(planner_frame)
         button_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
@@ -287,16 +286,16 @@ class RoutePlannerApp:
             ("Move Up", self.move_up),
             ("Move Down", self.move_down),
             ("Clear All", self.clear_plan),
-            ("Load Routes", self.load_existing_plan),
         )):
             tk.Button(button_frame, text=text, width=11, command=command).grid(row=0, column=column, padx=2)
 
         # Help text.
         help_text = (
-            "Instructions: choose a difficulty on the left, then choose levels and add them to the cycle list.\n"
-            "The right-side list runs in a loop automatically; no duplicate entries are needed.\n"
-            "Retry count is saved to each route. More features are in development; bug reports are welcome.\n"
-            "For questions or bug reports, contact chanonwa on GitHub (github.com/chanonwa/MAA-Task-Bar-Hero) or see the release notes there."
+            "Choose a difficulty, select stages on the left and press Add → to build the farming cycle "
+            "on the right; it repeats on its own.\n"
+            "Then tick your options and press Save and Start. Game: English, 100% zoom, with STASH, "
+            "HERO (Inventory tab) and PORTAL open.\n"
+            "Questions or bug reports: chanonwa on GitHub (github.com/chanonwa/MAA-Task-Bar-Hero)."
         )
 
         help_label = tk.Label(planner_frame, text=help_text, justify="left", anchor="w", wraplength=600)
@@ -328,21 +327,9 @@ class RoutePlannerApp:
 
         tk.Label(
             control_frame,
-            text="Retries when no chest drops:",
-            anchor="w",
-        ).grid(row=0, column=2, sticky="w", padx=(0, 4), pady=(10, 4))
-
-        tk.Entry(
-            control_frame,
-            textvariable=self.no_chest_retries_var,
-            width=6,
-        ).grid(row=0, column=3, sticky="w", pady=(10, 4))
-
-        tk.Label(
-            control_frame,
             textvariable=self.status_var,
             anchor="w",
-        ).grid(row=0, column=4, sticky="ew", padx=(14, 10), pady=(10, 4))
+        ).grid(row=0, column=2, columnspan=3, sticky="ew", padx=(0, 10), pady=(10, 4))
 
         tools = tk.Frame(control_frame)
         tools.grid(row=1, column=0, rowspan=2, columnspan=2, sticky="nw", padx=(10, 8), pady=(6, 4))
@@ -450,7 +437,7 @@ class RoutePlannerApp:
         root.geometry(f"{root.winfo_reqwidth()}x657")
 
         self.populate_available_levels()
-        self.load_existing_plan(silent=True)
+        self.load_existing_plan()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.register_emergency_hotkey()
         self.root.after(1000, self.refresh_bot_status)
@@ -695,42 +682,6 @@ class RoutePlannerApp:
             self.cleanup_after_clean_stop(process_exit_code=None, closing=False)
             self.status_var.set("Emergency stop executed: bot stopped.")
 
-    def get_default_no_chest_retries(self):
-        config = get_config()
-
-        if "default_no_chest_retries" in config:
-            value = config.get("default_no_chest_retries")
-        else:
-            value = int(config.get("default_max_trials_if_no_chest", 1)) - 1
-
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return 0
-
-        return max(0, value)
-
-    def get_no_chest_retries_from_input(self):
-        raw_value = self.no_chest_retries_var.get().strip()
-
-        try:
-            retries = int(raw_value)
-        except ValueError:
-            messagebox.showwarning(
-                "Invalid retry count",
-                "Retry count must be an integer greater than or equal to 0."
-            )
-            return None
-
-        if retries < 0:
-            messagebox.showwarning(
-                "Invalid retry count",
-                "Retry count must be an integer greater than or equal to 0."
-            )
-            return None
-
-        return retries
-
     def update_synthesis_cap_state(self):
         # The grade cap only matters while Cube synthesis is on.
         self.synthesis_cap_menu.configure(state="normal" if self.auto_synthesis_var.get() else "disabled")
@@ -908,11 +859,6 @@ class RoutePlannerApp:
             )
             return False
 
-        no_chest_retries = self.get_no_chest_retries_from_input()
-
-        if no_chest_retries is None:
-            return False
-
         if not self.boss_use_all_var.get() and self.get_boss_runs_from_input() is None:
             return False
 
@@ -927,8 +873,6 @@ class RoutePlannerApp:
         for i, level in enumerate(self.selected_routes, start=1):
             route = level.copy()
             route["name"] = f"Route {i}"
-            route["no_chest_retries"] = no_chest_retries
-            route.pop("max_trials_if_no_chest", None)
             plan.append(route)
 
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -1358,10 +1302,9 @@ class RoutePlannerApp:
         self.close_bot_log_handle()
         self.root.destroy()
 
-    def load_existing_plan(self, silent=False):
+    def load_existing_plan(self):
+        """Show the saved farming cycle (farm_plan.json) when the app opens."""
         if not os.path.exists(OUTPUT_FILE):
-            if not silent:
-                messagebox.showinfo("Route file not found", f"{OUTPUT_FILE.name} does not exist.")
             return
 
         try:
@@ -1372,30 +1315,7 @@ class RoutePlannerApp:
                 raise ValueError("farm_plan.json must be a list.")
 
             self.selected_routes = plan
-            if plan:
-                first_route = plan[0]
-
-                if "no_chest_retries" in first_route:
-                    retries = first_route.get("no_chest_retries")
-                elif "max_trials_if_no_chest" in first_route:
-                    retries = first_route.get("max_trials_if_no_chest", 1)
-                else:
-                    retries = self.get_default_no_chest_retries()
-
-                try:
-                    if "no_chest_retries" not in first_route and "max_trials_if_no_chest" in first_route:
-                        retries = int(retries) - 1
-
-                    retries = max(0, int(retries))
-                    self.no_chest_retries_var.set(str(retries))
-                except (TypeError, ValueError):
-                    self.no_chest_retries_var.set(str(self.get_default_no_chest_retries()))
-
             self.refresh_plan_listbox()
-
-            if not silent:
-                messagebox.showinfo("Loaded", f"Loaded {len(plan)} route(s) from {OUTPUT_FILE.name}.")
-
             self.status_var.set(f"Loaded {len(plan)} route(s).")
 
         except Exception as e:
