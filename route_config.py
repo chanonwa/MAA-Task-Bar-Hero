@@ -83,6 +83,7 @@ CHEST_TIER_BREAKPOINTS = [
     {"chest_tier": 50, "difficulty": "nightmare", "chapter": "chapter_3", "level": "3-5"},
     {"chest_tier": 65, "difficulty": "hell", "chapter": "chapter_2", "level": "2-5"},
     {"chest_tier": 80, "difficulty": "torment", "chapter": "chapter_1", "level": "1-3"},
+    {"chest_tier": 90, "difficulty": "torment", "chapter": "chapter_3", "level": "3-1"},
 ]
 
 SPECIAL_LEVEL_OVERRIDES = {

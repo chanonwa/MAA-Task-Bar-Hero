@@ -1,6 +1,6 @@
 {
-    "default_no_chest_retries": 4,
-    "default_max_trials_if_no_chest": 5,
+    "default_no_chest_retries": 1,
+    "default_max_trials_if_no_chest": 2,
     "post_clear_reward_wait_seconds": 3.0,
     "save_debug_screenshots": false,
     "max_route_navigation_retries": 2,
@@ -18,7 +18,6 @@
         255
     ],
     "stop_if_blue_chest_found": true,
-    "repeat_same_level_after_blue_chest": true,
     "open_all_boxes_on_same_level": true,
     "has_rune_of_opening": true,
     "use_soulstones_for_act_bosses": true,

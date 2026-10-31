@@ -12,6 +12,7 @@ STATE_STARTUP_NAVIGATION = "startup_navigation"
 STATE_NAVIGATION_FAILED = "navigation_failed"
 STATE_LOOK_FOR_BOSS = "look_for_boss"
 STATE_LOOK_FOR_BLUE_DROP = "look_for_blue_drop"
+STATE_PLAGUELANDS = "plaguelands"
 
 FREEZE_SECONDS_AFTER_SWITCH = 5
 POST_BOSS_DROP_WINDOW_SECONDS = 45

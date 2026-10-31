@@ -85,6 +85,7 @@ from state import (
     POST_BOSS_DROP_WINDOW_SECONDS,
     RECOVERY_REWARD_HANDLED,
     STATE_FREEZE_AFTER_SWITCH,
+    STATE_PLAGUELANDS,
     STATE_LOOK_FOR_BLUE_DROP,
     STATE_LOOK_FOR_BOSS,
     STATE_NAVIGATION_FAILED,
@@ -454,7 +455,7 @@ LEVEL_DOT_WHITE_MATCH_THRESHOLD = get_threshold("level_dot_white", LEVEL_DOT_WHI
 LEVEL_DOT_GREEN_MATCH_THRESHOLD = get_threshold("level_dot_green", LEVEL_DOT_GREEN_MATCH_THRESHOLD)
 LEVEL_STRONG_ACCEPT_THRESHOLD = max(0.88, get_threshold("current_level_detection", LEVEL_MATCH_THRESHOLD))
 LEVEL_CAUTIOUS_ACCEPT_THRESHOLD = get_threshold("level_cautious_accept", None)
-DEFAULT_MAX_TRIALS_IF_NO_CHEST = config_positive_int("default_max_trials_if_no_chest", 5)
+DEFAULT_MAX_TRIALS_IF_NO_CHEST = config_positive_int("default_max_trials_if_no_chest", 2)
 DEFAULT_NO_CHEST_RETRIES = get_config().get(
     "default_no_chest_retries",
     max(0, DEFAULT_MAX_TRIALS_IF_NO_CHEST - 1)
@@ -502,10 +503,10 @@ SELECTED_LEVEL_GREEN_HSV_LOWER = config_hsv_triplet("selected_level_green_hsv_lo
 SELECTED_LEVEL_GREEN_HSV_UPPER = config_hsv_triplet("selected_level_green_hsv_upper", [95, 255, 255])
 ASSUME_MAILBOX_AFTER_MAX_TRIALS = config_bool("assume_mailbox_after_max_trials", True)
 STOP_IF_BLUE_CHEST_FOUND = config_bool("stop_if_blue_chest_found", True)
-REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST = env_flag(
-    "MAATBH_REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST",
-    config_bool("repeat_same_level_after_blue_chest", True),
-)
+BLUE_CHEST_OPEN_TIMEOUT_SECONDS = 2.0
+# Counted from starting the move to a stage. Only the shortest stages clear faster, so a blue
+# chest seen sooner almost always queued earlier, while the bot was off or on another stage.
+STAGE_FIRST_CHEST_MIN_SECONDS = 30.0
 OPEN_ALL_BOXES_ON_SAME_LEVEL = config_bool("open_all_boxes_on_same_level", True)
 # With the Rune of Opening, Space opens every queued chest of every type at once.
 HAS_RUNE_OF_OPENING = env_flag(
@@ -650,7 +651,10 @@ CUBE_GRID_ROWS = (127, 168, 208)
 # A synthesis result appears in the middle cell of the 3x3 grid.
 CUBE_RESULT_CELL = 4
 # Round buttons in the HERO panel that switch the right-hand panel, relative to the HERO title.
-HERO_PANEL_BUTTON_OFFSETS = {"cube": (58, 376), "portal": (113, 376)}
+HERO_PANEL_BUTTON_OFFSETS = {"stash": (-114, 376), "cube": (58, 376), "portal": (113, 376)}
+# The button at the right end of the battle bar hides every panel; its arrow points up while they are hidden.
+PANELS_HIDDEN_BUTTON_TEMPLATE_PATH = "templates/general/panels_hidden_button.png"
+PANELS_HIDDEN_BUTTON_MATCH_THRESHOLD = 0.9
 SOULSTONE_MATCH_THRESHOLD = config_non_negative_float("soulstone_match_threshold", 0.85)
 SOULSTONE_TOOLTIP_WAIT_SECONDS = config_non_negative_float("soulstone_tooltip_wait_seconds", 1.5)
 SOULSTONE_SCAN_MAX_AGE_SECONDS = 60
@@ -680,6 +684,43 @@ CURRENT_STAGE_GREEN_MIN_PIXELS = 150
 CURRENT_STAGE_LABEL_MATCH_THRESHOLD = 0.75
 # PORTAL map area (below the act tabs) relative to the difficulty dropdown center.
 PORTAL_MAP_OFFSETS_FROM_DIFFICULTY_DROPDOWN = (-146, 56, 154, 366)
+# Plaguelands: when Contamination is over half, enter at the hardest difficulty with the tab
+# and the highest Plague Intensity unlocked, stay until the game forces the hero out at 0, then
+# go back to the first stage of the plan.
+PLAGUELANDS_ENABLED = env_flag("MAATBH_PLAGUELANDS", config_bool("plaguelands_enabled", False))
+PLAGUELANDS_MIN_CONTAMINATION_SHARE = config_non_negative_float("plaguelands_min_contamination_share", 0.5)
+PLAGUELANDS_CHECK_MINUTES = config_non_negative_float("plaguelands_check_minutes", 10)
+# With no CLEAR for this long the hero can't beat this Plague Intensity, so stop spending
+# Contamination on it.
+PLAGUELANDS_NO_CLEAR_MINUTES = config_non_negative_float("plaguelands_no_clear_minutes", 15)
+PLAGUELANDS_DIFFICULTY_ORDER = ("torment", "hell", "nightmare")
+PLAGUELANDS_LABEL_TEMPLATE_PATH = "templates/general/plaguelands_contamination.png"
+PLAGUELANDS_BLUE_CHEST_TEMPLATE_PATH = "templates/general/chest_plaguelands_blue.png"
+PLAGUELANDS_MATCH_THRESHOLD = 0.85
+PLAGUELANDS_TAB_OFFSET_FROM_DROPDOWN = (96, 36)
+# Relative to the "Contamination" label, which only shows on the Plaguelands tab.
+PLAGUELANDS_INTENSITY_UP_OFFSET = (24, -180)
+PLAGUELANDS_STAGE_DOT_OFFSET = (1, -100)
+PLAGUELANDS_INTENSITY_UP_REGION = (19, -187, 28, -173)
+PLAGUELANDS_STAGE_NAME_REGION = (-75, -82, 75, -67)
+PLAGUELANDS_BAR_REGION = (-127, 16, 128, 18)
+PLAGUELANDS_BAR_HSV_LOWER = (125, 60, 50)
+PLAGUELANDS_BAR_HSV_UPPER = (160, 255, 255)
+PLAGUELANDS_ARROW_BRIGHT_HSV_LOWER = (0, 0, 190)
+PLAGUELANDS_ARROW_BRIGHT_HSV_UPPER = (180, 90, 255)
+PLAGUELANDS_ARROW_MIN_BRIGHT_PIXELS = 20
+PLAGUELANDS_STAGE_NAME_MIN_GREEN_PIXELS = 100
+PLAGUELANDS_MAX_INTENSITY_CLICKS = 30
+PLAGUELANDS_OUTSIDE_READS_TO_FINISH = 5
+PLAGUELANDS_CHEST_OPEN_COOLDOWN_SECONDS = 5.0
+PLAGUELANDS_TAB_RETRY_SECONDS = 10.0
+last_contamination_check_at = 0
+plaguelands_given_up = False
+plaguelands_difficulty = None
+plaguelands_last_clear_at = 0
+plaguelands_outside_reads = 0
+plaguelands_last_chest_open_at = 0
+plaguelands_last_tab_try_at = 0
 STORAGE_STASH_SEARCH_REGION =get_config().get("storage_stash_search_region", "hero_panel")
 STORAGE_GRID_ANCHOR_OFFSET_X = config_int("storage_grid_anchor_offset_x", -249)
 STORAGE_GRID_ANCHOR_OFFSET_Y = config_int("storage_grid_anchor_offset_y", -295)
@@ -1435,7 +1476,6 @@ def log_recognition_profile_startup():
         f"mouse_movement_fail_safe_policy={MOUSE_MOVEMENT_FAIL_SAFE_POLICY} | "
         f"navigation_failure_policy={NAVIGATION_FAILURE_POLICY} | "
         f"max_consecutive_navigation_skips={MAX_CONSECUTIVE_NAVIGATION_SKIPS} | "
-        f"repeat_same_level_after_blue_chest={REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST} | "
         f"open_all_boxes_on_same_level={OPEN_ALL_BOXES_ON_SAME_LEVEL} | "
         f"has_rune_of_opening={HAS_RUNE_OF_OPENING} | "
         f"use_soulstones_for_act_bosses={USE_SOULSTONES_FOR_ACT_BOSSES} | "
@@ -1504,6 +1544,9 @@ def get_startup_template_specs():
     add_template_spec(specs, seen_paths, "general:stash_sort", STASH_SORT_TEMPLATE)
     add_template_spec(specs, seen_paths, "general:stash_blank_slot", STASH_BLANK_TEMPLATE)
     add_template_spec(specs, seen_paths, "general:mouse_rest_hero_title", MOUSE_REST_TEMPLATE_PATH)
+    add_template_spec(specs, seen_paths, "general:panels_hidden_button", PANELS_HIDDEN_BUTTON_TEMPLATE_PATH)
+    add_template_spec(specs, seen_paths, "general:plaguelands_contamination", PLAGUELANDS_LABEL_TEMPLATE_PATH)
+    add_template_spec(specs, seen_paths, "general:plaguelands_blue_chest", PLAGUELANDS_BLUE_CHEST_TEMPLATE_PATH)
     for name, path in (
         ("cube_title", CUBE_TITLE_TEMPLATE_PATH),
         ("cube_mode_synthesis", CUBE_MODE_SYNTHESIS_TEMPLATE_PATH),
@@ -1630,6 +1673,7 @@ def log_chest_tier_breakpoint_validation():
         ("hell", "chapter_1", "1-1"),
         ("hell", "chapter_2", "2-5"),
         ("torment", "chapter_1", "1-3"),
+        ("torment", "chapter_3", "3-1"),
     ]
 
     for difficulty, chapter, level in sample_routes:
@@ -2115,7 +2159,9 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
         winsound.Beep(1900, 250)
         winsound.Beep(2200, 250)
 
-    if ENABLE_CLICKING or AUTO_OPEN_CONFIRMED_BLUE_CHEST:
+    opens_chest = ENABLE_CLICKING or AUTO_OPEN_CONFIRMED_BLUE_CHEST
+
+    if opens_chest:
         write_log("Blue drop confirmed. Opening blue chest before route advance.")
         time.sleep(1.0)
 
@@ -2138,8 +2184,6 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
 
         state_memory.blue_drop_handled_this_route = True
         write_log("Blue chest click completed.")
-        try_move_backpack_to_storage_after_blue_chest()
-        run_act_boss_attempts_if_enabled()
     else:
         state_memory.blue_drop_handled_this_route = True
         write_log("DRY RUN: would click blue chest once.")
@@ -2147,11 +2191,14 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
     if STOP_IF_BLUE_CHEST_FOUND:
         reset_no_chest_trial_count("confirmed_blue_drop")
 
-    if REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST:
-        write_log(
-            "Blue chest completed and repeat_same_level_after_blue_chest is enabled. "
-            "Route advancement skipped; same route/level will be repeated."
-        )
+    # A one-stage plan stays put. A chest from before this stage doesn't count as this
+    # stage's. A chest that didn't open stays queued and would read as a new chest on every
+    # stage. In both cases the plan stays here too.
+    if len(ROUTE) == 1 or (opens_chest and (blue_chest_predates_stage() or blue_chest_still_queued())):
+        if opens_chest:
+            stash_and_fight_after_blue_chest()
+
+        write_log("Blue chest completed. Staying on the same stage.")
         repeat_current_route_after_blue_chest()
         return {
             "state": bot_state,
@@ -2161,7 +2208,12 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
             "message": "Repeated same route after blue chest"
         }
 
+    # The game keeps farming during the stash pass, so press the next stage first: the
+    # pass then costs no farming time.
     advance_route(do_navigation=True, reason="blue_drop_confirmed")
+
+    if opens_chest and bot_state != STATE_NAVIGATION_FAILED:
+        stash_and_fight_after_blue_chest()
 
     return {
         "state": bot_state,
@@ -2176,12 +2228,10 @@ def retry_detector_cycle_current_route():
     """
     Retry detection on the currently selected level without map navigation.
     """
-    global route_start_time
     global bot_state
     global freeze_start_time
 
     route = get_current_route()
-    route_start_time = time.time()
 
     log_detector_retry_marker("no_chest_below_limit")
     reset_route_detection_memory()
@@ -3404,6 +3454,7 @@ def forget_soulstone_slots(reason):
 
 def scan_stash_tabs_for_soulstones(context):
     """Visit the stash tabs only to look for soulstones (no Stash All)."""
+    open_stash_panel()
     run_stash_stack_pass(None, context, press_stash_all=False)
 
 
@@ -4106,9 +4157,65 @@ def right_panel_center(screenshot, panel):
     return anchor if confidence >= DIFFICULTY_MATCH_THRESHOLD else None
 
 
+def show_hidden_panels(screenshot):
+    """Press the battle bar's button when it has hidden every panel. Returns the latest screenshot."""
+    button = find_template_center(screenshot, PANELS_HIDDEN_BUTTON_TEMPLATE_PATH, PANELS_HIDDEN_BUTTON_MATCH_THRESHOLD)
+
+    if button is None:
+        return screenshot
+
+    write_log("The game's panels are hidden; showing them again")
+
+    # The first click on an inactive game window may only activate it, hence the retry.
+    for attempt in (1, 2):
+        click_window_point(GAME_HWND, button[0], button[1], label=f"show_panels_{attempt}", settle_seconds=0)
+        shown, screenshot = wait_for_screen(
+            lambda s: find_template_center(s, HERO_TITLE_TEMPLATE_PATH, MOUSE_REST_MATCH_THRESHOLD) is not None,
+            1.5,
+        )
+
+        if shown:
+            break
+
+    return screenshot
+
+
+def stash_panel_is_open(screenshot):
+    return find_template_center(screenshot, STASH_TAKE_ALL_TEMPLATE_PATH, BUTTON_MATCH_THRESHOLD) is not None
+
+
+def open_stash_panel():
+    """Open the STASH panel with the HERO panel's round button when it is closed."""
+    screenshot = show_hidden_panels(capture_window(GAME_HWND))
+
+    if stash_panel_is_open(screenshot):
+        return True
+
+    hero = find_template_center(screenshot, HERO_TITLE_TEMPLATE_PATH, MOUSE_REST_MATCH_THRESHOLD)
+
+    if hero is None:
+        write_log("STASH panel not opened: HERO panel not found")
+        return False
+
+    dx, dy = HERO_PANEL_BUTTON_OFFSETS["stash"]
+
+    # The first click on an inactive game window may only activate it, hence the retry.
+    for attempt in (1, 2):
+        click_window_point(
+            GAME_HWND, hero[0] + dx, hero[1] + dy, label=f"open_stash_panel_{attempt}", settle_seconds=0
+        )
+
+        if wait_for_screen(stash_panel_is_open, 1.5)[0]:
+            write_log("STASH panel was closed; opened it")
+            return True
+
+    write_log("STASH panel could not be opened")
+    return False
+
+
 def switch_right_panel(panel):
     """Show the Cube or PORTAL on the right with the HERO panel's round buttons."""
-    screenshot = capture_window(GAME_HWND)
+    screenshot = show_hidden_panels(capture_window(GAME_HWND))
 
     for attempt in (1, 2):
         center = right_panel_center(screenshot, panel)
@@ -4433,6 +4540,8 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
 
 
 def transfer_backpack_to_storage(template, context):
+    open_stash_panel()
+
     if STACK_STASH_AFTER_TRANSFER:
         return run_stash_stack_pass(template, context)
 
@@ -4515,6 +4624,39 @@ def try_move_backpack_to_storage_after_blue_chest():
         return False
 
     return run_backpack_to_storage_transfer(context="blue_chest")
+
+
+def stash_and_fight_after_blue_chest():
+    try_move_backpack_to_storage_after_blue_chest()
+    run_act_boss_attempts_if_enabled()
+
+
+def blue_chest_predates_stage():
+    seconds_on_stage = time.time() - route_start_time
+
+    if seconds_on_stage >= STAGE_FIRST_CHEST_MIN_SECONDS:
+        return False
+
+    write_log(f"Blue chest queued before this stage; opened it and staying | seconds_on_stage={seconds_on_stage:.0f}")
+    return True
+
+
+def blue_chest_still_queued():
+    """
+    True when the blue chest is still there after opening it, for example because the
+    backpack is full. Stops as soon as it is gone.
+    """
+    blue_template = load_template("templates/general/chest_blue.png")
+    brown_template = load_template("templates/general/chest_brown.png")
+    opened, _screenshot = wait_for_screen(
+        lambda s: not any(d["type"] == "blue" for d in detect_all_chests(s, blue_template, brown_template)),
+        BLUE_CHEST_OPEN_TIMEOUT_SECONDS,
+    )
+
+    if not opened:
+        write_log("WARNING: the blue chest did not open; staying on this stage until it does")
+
+    return not opened
 
 
 def try_move_backpack_to_storage_after_non_blue_box():
@@ -5715,10 +5857,12 @@ def check_route_target_invariant(hwnd, route, reason):
                 and route_target_invariant_confidence_is_strong(observed)
             )
 
+            # A pressed stage's label turns green and the map may scroll, so the white
+            # label template can't be relied on; read the green stage itself as well.
             relaxed_level_ok = (
                 observed.get("level_y_ok")
                 and level_confidence >= 0.75
-            )
+            ) or current_stage_in_view(capture_window(hwnd), route["chapter"]) == route["level"]
 
             if recent_evidence_ok and current_identity_ok and relaxed_level_ok:
                 observed["level_selected"] = True
@@ -6751,10 +6895,11 @@ def wait_for_portal_view(hwnd, read_view, expected, timeout):
 
 
 def read_settled_difficulty(img):
-    """The dropdown's difficulty, once the act ribbon is readable again."""
+    """The dropdown's difficulty, once the view under it is readable: the act ribbon, or the Plaguelands tab, which has none."""
     name, _center, confidence, _info = find_best_difficulty_anchor(img)
+    view_settled = find_act_ribbon(img)[0] is not None or plaguelands_label_center(img) is not None
 
-    if confidence < DIFFICULTY_MATCH_THRESHOLD or find_act_ribbon(img)[0] is None:
+    if confidence < DIFFICULTY_MATCH_THRESHOLD or not view_settled:
         return None, confidence
 
     return name, confidence
@@ -7333,7 +7478,7 @@ def game_is_on_stage(route):
     return level == route["level"]
 
 
-def navigate_to_current_route_if_enabled(activate_boss_gate=False):
+def navigate_to_current_route_if_enabled(activate_boss_gate=False, moving_to_another_stage=False):
     global bot_state
 
     route = get_current_route()
@@ -7354,8 +7499,13 @@ def navigate_to_current_route_if_enabled(activate_boss_gate=False):
         f"target={route['difficulty']} | {route['chapter']} | {route['level']}"
     )
 
-    # Pressing the stage the game is already on restarts its progress, so look first.
-    if game_is_on_stage(route):
+    # The Cube takes PORTAL's place on the right when it is left open.
+    if switch_right_panel("portal") is None:
+        write_log("Route navigation: PORTAL is not showing and could not be opened")
+
+    # Pressing the stage the game is already on restarts its progress, so look first,
+    # unless the bot is just leaving another stage for this one.
+    if not moving_to_another_stage and game_is_on_stage(route):
         write_log(
             f"Already on the route's stage; not pressing it again | "
             f"target={route['difficulty']} | {route['chapter']} | {route['level']}"
@@ -7494,6 +7644,264 @@ def navigate_to_current_route_if_enabled(activate_boss_gate=False):
 
     return success
 
+def crop_around(screenshot, center, region):
+    x1, y1, x2, y2 = region
+    return screenshot[center[1] + y1:center[1] + y2, center[0] + x1:center[0] + x2]
+
+
+def plaguelands_label_center(screenshot):
+    """Center of the "Contamination" label; it only shows on the Plaguelands tab."""
+    return find_template_center(screenshot, PLAGUELANDS_LABEL_TEMPLATE_PATH, PLAGUELANDS_MATCH_THRESHOLD)
+
+
+def contamination_share(screenshot, label):
+    """How full the Contamination bar is, read on rows above the number and its purple glow."""
+    strip = cv2.cvtColor(crop_around(screenshot, label, PLAGUELANDS_BAR_REGION), cv2.COLOR_BGR2HSV)
+    purple = cv2.inRange(strip, PLAGUELANDS_BAR_HSV_LOWER, PLAGUELANDS_BAR_HSV_UPPER)
+    return float(((purple > 0).mean(axis=0) > 0.5).mean())
+
+
+def plague_intensity_can_rise(screenshot, label):
+    """The up arrow is bright while a higher Plague Intensity is unlocked, and grey at the highest."""
+    arrow = cv2.cvtColor(crop_around(screenshot, label, PLAGUELANDS_INTENSITY_UP_REGION), cv2.COLOR_BGR2HSV)
+    bright = cv2.inRange(arrow, PLAGUELANDS_ARROW_BRIGHT_HSV_LOWER, PLAGUELANDS_ARROW_BRIGHT_HSV_UPPER)
+    return cv2.countNonZero(bright) >= PLAGUELANDS_ARROW_MIN_BRIGHT_PIXELS
+
+
+def inside_plaguelands(screenshot, label):
+    """The stage's name under its dot is green only while the hero is on it."""
+    name = cv2.cvtColor(crop_around(screenshot, label, PLAGUELANDS_STAGE_NAME_REGION), cv2.COLOR_BGR2HSV)
+    green = cv2.inRange(name, CURRENT_STAGE_GREEN_HSV_LOWER, CURRENT_STAGE_GREEN_HSV_UPPER)
+    return cv2.countNonZero(green) >= PLAGUELANDS_STAGE_NAME_MIN_GREEN_PIXELS
+
+
+def open_plaguelands_tab(difficulty):
+    """Show a difficulty's Plaguelands tab. Returns the label center, or None without that tab."""
+    if switch_right_panel("portal") is None or not select_difficulty(GAME_HWND, difficulty):
+        return None
+
+    screenshot = capture_window(GAME_HWND)
+    label = plaguelands_label_center(screenshot)
+
+    if label is not None:
+        return label
+
+    _name, dropdown, _confidence, _info = find_best_difficulty_anchor(screenshot)
+
+    if dropdown is None:
+        return None
+
+    # The first click on an inactive game window may only activate it, hence the retry.
+    for attempt in (1, 2):
+        click_window_point(
+            GAME_HWND,
+            dropdown[0] + PLAGUELANDS_TAB_OFFSET_FROM_DROPDOWN[0],
+            dropdown[1] + PLAGUELANDS_TAB_OFFSET_FROM_DROPDOWN[1],
+            label=f"plaguelands_tab_{attempt}",
+            settle_seconds=0,
+        )
+        shown, screenshot = wait_for_screen(lambda s: plaguelands_label_center(s) is not None, 1.0)
+
+        if shown:
+            return plaguelands_label_center(screenshot)
+
+    return None
+
+
+def leave_plaguelands_tab():
+    """
+    Go back to an act. With the hero on a Torment stage, switching from this tab to Normal,
+    which has no such tab, renames the dropdown but leaves the Torment map showing.
+    """
+    click_act_tab_by_position(GAME_HWND, capture_window(GAME_HWND), get_current_route()["chapter"])
+
+
+def raise_plague_intensity(label):
+    """Click the up arrow until it turns grey: the highest Plague Intensity unlocked."""
+    for _ in range(PLAGUELANDS_MAX_INTENSITY_CLICKS):
+        if not plague_intensity_can_rise(capture_window(GAME_HWND), label):
+            return
+
+        click_window_point(
+            GAME_HWND,
+            label[0] + PLAGUELANDS_INTENSITY_UP_OFFSET[0],
+            label[1] + PLAGUELANDS_INTENSITY_UP_OFFSET[1],
+            label="plague_intensity_up",
+            settle_seconds=0,
+        )
+        time.sleep(0.25)
+
+
+def start_plaguelands_run(difficulty, reason):
+    global bot_state, plaguelands_difficulty, plaguelands_last_clear_at, plaguelands_outside_reads
+
+    bot_state = STATE_PLAGUELANDS
+    plaguelands_difficulty = difficulty
+    plaguelands_last_clear_at = time.time()
+    plaguelands_outside_reads = 0
+    reset_no_chest_trial_count("plaguelands_run")
+    reset_route_detection_memory()
+    write_log(f"Plaguelands run started | difficulty={difficulty} | reason={reason}")
+
+
+def enter_plaguelands(difficulty, label):
+    raise_plague_intensity(label)
+
+    for attempt in (1, 2):
+        click_window_point(
+            GAME_HWND,
+            label[0] + PLAGUELANDS_STAGE_DOT_OFFSET[0],
+            label[1] + PLAGUELANDS_STAGE_DOT_OFFSET[1],
+            label=f"plaguelands_stage_{attempt}",
+            settle_seconds=0,
+        )
+
+        if wait_for_screen(lambda s: inside_plaguelands(s, label), 3.0)[0]:
+            start_plaguelands_run(difficulty, "Contamination over the limit")
+            return True
+
+    write_log(f"Plaguelands: pressed the stage but the game didn't enter it | difficulty={difficulty}")
+    return False
+
+
+def maybe_enter_plaguelands():
+    """
+    Every few minutes, read Contamination on the PORTAL's Plaguelands tab and enter when it
+    is over the limit. Reading only changes the view; no stage is pressed.
+    """
+    global last_contamination_check_at, plaguelands_given_up
+
+    if (
+        not PLAGUELANDS_ENABLED
+        or plaguelands_given_up
+        or bot_state != STATE_LOOK_FOR_BOSS
+        or state_memory.orphan_blue_chest_first_seen != 0
+        or time.time() - last_contamination_check_at < PLAGUELANDS_CHECK_MINUTES * 60
+    ):
+        return False
+
+    last_contamination_check_at = time.time()
+
+    for difficulty in PLAGUELANDS_DIFFICULTY_ORDER:
+        label = open_plaguelands_tab(difficulty)
+
+        if label is not None:
+            share = contamination_share(capture_window(GAME_HWND), label)
+            write_log(
+                f"Contamination check | difficulty={difficulty} | share={share:.3f} | "
+                f"needs_over={PLAGUELANDS_MIN_CONTAMINATION_SHARE:.3f}"
+            )
+
+            if share > PLAGUELANDS_MIN_CONTAMINATION_SHARE and enter_plaguelands(difficulty, label):
+                return True
+
+            leave_plaguelands_tab()
+            return False
+
+    plaguelands_given_up = True
+    write_log("Plaguelands: no difficulty shows the Plaguelands tab; not checking again this run")
+    return False
+
+
+def resume_plaguelands_run():
+    """When the bot starts with the hero already in the Plaguelands, stay there instead of pressing the plan's stage."""
+    if not PLAGUELANDS_ENABLED:
+        return False
+
+    for difficulty in PLAGUELANDS_DIFFICULTY_ORDER:
+        label = open_plaguelands_tab(difficulty)
+
+        if label is not None and inside_plaguelands(capture_window(GAME_HWND), label):
+            start_plaguelands_run(difficulty, "already there when the bot started")
+            return True
+
+    leave_plaguelands_tab()
+    return False
+
+
+def finish_plaguelands_run(reason):
+    global current_route_index, last_contamination_check_at
+
+    write_log(f"Plaguelands run finished | reason={reason}; back to the first stage of the plan")
+    current_route_index = 0
+    last_contamination_check_at = time.time()
+    clear_active_same_tier_substitute("plaguelands_run_finished")
+    leave_plaguelands_tab()
+    navigate_to_startup_route()
+
+
+def open_plaguelands_chests(detections, screenshot):
+    """Open what has queued and stash it. Plaguelands chests have bubbles of their own."""
+    global plaguelands_last_chest_open_at
+
+    now = time.time()
+
+    if now - plaguelands_last_chest_open_at < PLAGUELANDS_CHEST_OPEN_COOLDOWN_SECONDS:
+        return
+
+    chest = max(detections, key=lambda d: d["confidence"])["center_full"] if detections else None
+    chest = chest or find_template_center(screenshot, PLAGUELANDS_BLUE_CHEST_TEMPLATE_PATH, PLAGUELANDS_MATCH_THRESHOLD)
+
+    if chest is None:
+        return
+
+    plaguelands_last_chest_open_at = now
+    open_queued_chests(GAME_HWND, chest[0], chest[1], "plaguelands")
+    time.sleep(0.25)
+    try_move_backpack_to_storage_after_blue_chest()
+
+
+def run_plaguelands_tick(img, detections, clear_visible):
+    """One look at the game during a Plaguelands run: watch for its end, open chests, stash."""
+    global plaguelands_given_up, plaguelands_last_clear_at, plaguelands_outside_reads, plaguelands_last_tab_try_at
+
+    info = {
+        "state": bot_state,
+        "boss_visible": False,
+        "blue_chest_visible": False,
+        "blue_log_visible": False,
+        "message": "Plaguelands run",
+    }
+    now = time.time()
+
+    if clear_visible:
+        if now - plaguelands_last_clear_at > 30:
+            write_log(f"Plaguelands stage cleared | seconds_since_last={now - plaguelands_last_clear_at:.0f}")
+
+        plaguelands_last_clear_at = now
+
+    if now - plaguelands_last_clear_at > PLAGUELANDS_NO_CLEAR_MINUTES * 60:
+        plaguelands_given_up = True
+        write_log(
+            f"WARNING: no Plaguelands clear for {PLAGUELANDS_NO_CLEAR_MINUTES:.0f} minutes; "
+            "leaving and not entering again until the bot restarts"
+        )
+        finish_plaguelands_run("no clear")
+        return info
+
+    label = plaguelands_label_center(img)
+
+    if label is None:
+        # A Cube run or a click by hand changed the view; only look again, nothing is pressed.
+        if now - plaguelands_last_tab_try_at >= PLAGUELANDS_TAB_RETRY_SECONDS:
+            plaguelands_last_tab_try_at = now
+            open_plaguelands_tab(plaguelands_difficulty)
+
+        return info
+
+    if inside_plaguelands(img, label):
+        plaguelands_outside_reads = 0
+    else:
+        plaguelands_outside_reads += 1
+
+        if plaguelands_outside_reads >= PLAGUELANDS_OUTSIDE_READS_TO_FINISH:
+            finish_plaguelands_run("the game left the Plaguelands")
+            return info
+
+    open_plaguelands_chests(detections, img)
+    return info
+
+
 def navigate_to_startup_route():
     """
     Enter the first planned route before normal detection is allowed.
@@ -7542,12 +7950,10 @@ def repeat_current_route_after_blue_chest():
     Repeat the current route after successful blue reward handling without
     advancing the route index.
     """
-    global route_start_time
     global bot_state
     global freeze_start_time
 
     route = get_current_route()
-    route_start_time = time.time()
 
     write_log(
         f"Repeating same route after blue chest | "
@@ -7643,7 +8049,9 @@ def advance_route(do_navigation=False, reason="unknown"):
 
     if do_navigation:
         time.sleep(1.0)
-        navigation_ok = navigate_to_current_route_if_enabled()
+        navigation_ok = navigate_to_current_route_if_enabled(
+            moving_to_another_stage=route_identity(route) != route_identity(previous_route)
+        )
 
         if not navigation_ok:
             if bot_state == STATE_NAVIGATION_FAILED:
@@ -8020,7 +8428,7 @@ def main():
             and current_time - last_startup_nav_attempt_time >= STARTUP_NAV_RETRY_SECONDS
         ):
             last_startup_nav_attempt_time = current_time
-            startup_navigation_done = navigate_to_startup_route()
+            startup_navigation_done = resume_plaguelands_run() or navigate_to_startup_route()
             last_startup_nav_attempt_time = time.time()
             current_time = last_startup_nav_attempt_time
 
@@ -8068,22 +8476,27 @@ def main():
             startup_navigation_done
             and bot_state not in {STATE_STARTUP_NAVIGATION, STATE_NAVIGATION_FAILED}
         ):
-            chest_state = handle_chest_events(detections)
+            if bot_state == STATE_PLAGUELANDS:
+                chest_state = bot_state
+                bot_info = run_plaguelands_tick(img, detections, clear_visible)
+            else:
+                chest_state = handle_chest_events(detections)
 
-            bot_info = handle_bot_state(
-                img,
-                detections,
-                boss_visible,
-                boss_region,
-                boss_pixels,
-                boss_conf,
-                clear_visible,
-                clear_conf
-            )
-            maybe_open_non_blue_boxes_same_level(
-                detections,
-                clear_visible=clear_visible,
-            )
+                bot_info = handle_bot_state(
+                    img,
+                    detections,
+                    boss_visible,
+                    boss_region,
+                    boss_pixels,
+                    boss_conf,
+                    clear_visible,
+                    clear_conf
+                )
+                maybe_open_non_blue_boxes_same_level(
+                    detections,
+                    clear_visible=clear_visible,
+                )
+                maybe_enter_plaguelands()
         else:
             chest_state = bot_state
             bot_info = {

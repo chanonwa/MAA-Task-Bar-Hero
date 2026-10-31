@@ -1,8 +1,8 @@
 [
     {
         "name": "Route 1",
-        "display_name": "Level 80 | Torment | Chapter 3 | Level 3-1",
-        "chest_tier": 80,
+        "display_name": "Level 90 | Torment | Chapter 3 | Level 3-1",
+        "chest_tier": 90,
         "difficulty": "torment",
         "chapter": "chapter_3",
         "level": "3-1",
@@ -15,7 +15,62 @@
             "down"
         ],
         "enabled": true,
+        "note": ""
+    },
+    {
+        "name": "Route 2",
+        "display_name": "Level 10 | Normal | Chapter 1 | Level 1-8",
+        "chest_tier": 10,
+        "difficulty": "normal",
+        "chapter": "chapter_1",
+        "level": "1-8",
+        "level_template": "templates/levels/level_1_8.png",
+        "level_match_threshold": 0.88,
+        "search_order": [
+            "up",
+            "down",
+            "up",
+            "down"
+        ],
+        "enabled": true,
+        "note": ""
+    },
+    {
+        "name": "Route 3",
+        "display_name": "Level 15 | Normal | Chapter 2 | Level 2-3",
+        "chest_tier": 15,
+        "difficulty": "normal",
+        "chapter": "chapter_2",
+        "level": "2-3",
+        "level_template": "templates/levels/level_2_3.png",
+        "level_match_threshold": 0.92,
+        "search_order": [
+            "down",
+            "up",
+            "down",
+            "up"
+        ],
+        "enabled": true,
         "note": "",
-        "no_chest_retries": 1
+        "expected_y_min": 560,
+        "expected_y_max": 700
+    },
+    {
+        "name": "Route 4",
+        "display_name": "Level 20 | Normal | Chapter 2 | Level 2-8",
+        "chest_tier": 20,
+        "difficulty": "normal",
+        "chapter": "chapter_2",
+        "level": "2-8",
+        "level_template": "templates/levels/level_2_8.png",
+        "level_match_threshold": 0.88,
+        "search_order": [
+            "down",
+            "up",
+            "down",
+            "up"
+        ],
+        "enabled": true,
+        "note": ""
     }
 ]

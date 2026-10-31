@@ -222,6 +222,9 @@ class RoutePlannerApp:
             value=config_bool_value("auto_synthesis_enabled", False)
         )
         self.synthesis_cap_var = tk.StringVar(value=get_synthesis_cap_grade().title())
+        self.plaguelands_var = tk.BooleanVar(
+            value=config_bool_value("plaguelands_enabled", False)
+        )
         self.same_tier_substitution_var = tk.BooleanVar(
             value=config_bool_value("same_tier_substitution_enabled", True)
         )
@@ -292,7 +295,9 @@ class RoutePlannerApp:
         # Help text.
         help_text = (
             "Choose a difficulty, select stages on the left and press Add → to build the farming cycle "
-            "on the right; it repeats on its own.\n"
+            "on the right.\n"
+            "With several stages the bot moves on after each blue chest or after 2 clears without one, "
+            "and the cycle repeats; with one stage it stays there.\n"
             "Then tick your options and press Save and Start. Game: English, 100% zoom, with STASH, "
             "HERO (Inventory tab) and PORTAL open.\n"
             "Questions or bug reports: chanonwa on GitHub (github.com/chanonwa/MAA-Task-Bar-Hero)."
@@ -389,6 +394,12 @@ class RoutePlannerApp:
         self.boss_runs_entry = tk.Entry(boss_options, textvariable=self.boss_runs_var, width=4)
         self.boss_runs_entry.grid(row=0, column=2, sticky="w")
         self.update_boss_run_count_state()
+
+        tk.Checkbutton(
+            options,
+            text="Plaguelands when Contamination is over half",
+            variable=self.plaguelands_var,
+        ).grid(row=len(option_columns[1]), column=1, sticky="w", padx=(0, 12), pady=2)
 
         tk.Checkbutton(
             options,
@@ -728,6 +739,7 @@ class RoutePlannerApp:
         config["act_boss_use_all_soulstones"] = bool(self.boss_use_all_var.get())
         config["auto_synthesis_enabled"] = bool(self.auto_synthesis_var.get())
         config["auto_synthesis_up_to_grade"] = get_synthesis_cap_grade(self.synthesis_cap_var.get())
+        config["plaguelands_enabled"] = bool(self.plaguelands_var.get())
 
         try:
             config["act_boss_max_attempts"] = max(1, int(self.boss_runs_var.get().strip()))
@@ -914,15 +926,13 @@ class RoutePlannerApp:
 
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             env = os.environ.copy()
-            # Fixed settings: loot is always stashed (boss runs and Cube synthesis rely on
-            # it), and a blue chest repeats the same stage.
+            # Fixed settings: loot is always stashed (boss runs and Cube synthesis rely on it).
             env["MAATBH_SHOW_PREVIEW"] = "0"
             env["MAATBH_ENABLE_BEEP"] = "0"
             env["MAATBH_AUTO_OPEN_BLUE"] = "1"
             env["MAATBH_NAVIGATE_ON_START"] = "1"
             env["MAATBH_MOVE_TO_STORAGE"] = "1"
             env["MAATBH_MOVE_TO_STORAGE_AFTER_NON_BLUE_BOX"] = "1"
-            env["MAATBH_REPEAT_SAME_LEVEL_AFTER_BLUE_CHEST"] = "1"
             env["MAATBH_STACK_STASH_AFTER_TRANSFER"] = "1" if self.stack_stash_var.get() else "0"
             env["MAATBH_HAS_RUNE_OF_OPENING"] = "1" if self.rune_of_opening_var.get() else "0"
             env["MAATBH_USE_SOULSTONES"] = "1" if self.use_soulstones_var.get() else "0"
@@ -930,6 +940,7 @@ class RoutePlannerApp:
             env["MAATBH_ACT_BOSS_MAX_ATTEMPTS"] = self.boss_runs_var.get().strip()
             env["MAATBH_AUTO_SYNTHESIS"] = "1" if self.auto_synthesis_var.get() else "0"
             env["MAATBH_AUTO_SYNTHESIS_UP_TO"] = get_synthesis_cap_grade(self.synthesis_cap_var.get())
+            env["MAATBH_PLAGUELANDS"] = "1" if self.plaguelands_var.get() else "0"
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             self.write_bot_console_log(f"=== Recognition mode: {GUI_RECOGNITION_MODE} ===\n")
@@ -951,6 +962,9 @@ class RoutePlannerApp:
             )
             self.write_bot_console_log(
                 f"=== Synthesize up to: {get_synthesis_cap_grade(self.synthesis_cap_var.get()).title()} ===\n"
+            )
+            self.write_bot_console_log(
+                f"=== Plaguelands when Contamination is over half: {'on' if self.plaguelands_var.get() else 'off'} ===\n"
             )
             bot_command = (
                 [sys.executable, "--bot"]

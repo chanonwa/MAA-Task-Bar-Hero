@@ -20,10 +20,22 @@ Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MA
 
 In the GUI, add stages to the farming cycle, tick the options you want, and press **Save and Start**.
 
+## Farming cycle
+
+With one stage, the bot stays on it. With several, it moves on after each blue chest, or after 2 clears without one, and starts the list again when it reaches the end.
+
+Chests come at about the same rate wherever you farm, roughly one blue every 5 minutes and one common every 3, so a longer list doesn't add many. Over an hour of testing, moving through Torment 3-1 and low Normal stages gave about 12 blue chests an hour, about 5 of them from Torment 3-1. Staying on Torment 3-1 gives about 10 an hour, all at its top chest level. A longer list trades top-level chests for lower ones.
+
+## Plaguelands
+
+Tick *Plaguelands when Contamination is over half*. Every 10 minutes the bot reads Contamination on the PORTAL's Plaguelands tab. When it's over half, the bot enters at the hardest difficulty that has the tab and the highest Plague Intensity you've unlocked. Inside, it opens chests and stashes loot, and it saves boss runs for later. When the game sends you out at 0 Contamination, it goes back to the first stage of your farming cycle.
+
+If 15 minutes pass without a clear, it leaves and doesn't enter again until you restart the bot.
+
 ## Before you start
 
 * Set the game language to **English** and the game zoom to **1x / 100%**.
-* Keep the STASH, HERO, and PORTAL windows open, with the HERO panel on its **Inventory** tab.
+* Keep the STASH, HERO, and PORTAL windows open, with the HERO panel on its **Inventory** tab. If you hide the panels with the button on the battle bar, or close STASH or PORTAL, the bot opens them again.
 * The bot uses your real mouse, so don't use the mouse while it runs. Press **Ctrl + Shift + F12** to stop it.
 
 ## Troubleshooting
@@ -36,7 +48,7 @@ In the GUI, add stages to the farming cycle, tick the options you want, and pres
 
 **The bot can't find a stage.** Check the zoom is 1x and the PORTAL window is open. A stage marked `[Unavailable]` is missing its template in `templates/levels/`.
 
-**Cube synthesis doesn't run.** It runs only when the backpack's 21 visible slots are still full after stashing and *Cube synthesis when the inventory is full* is ticked. After a run that combined nothing, it waits 10 minutes before trying again. Items at or above the *Synthesize up to* grade are locked first and never combined, and neither are soulstones. To protect any other item, lock it yourself with ALT + left click; the bot keeps those locks.
+**Cube synthesis doesn't run.** It runs only when the backpack's 21 visible slots are still full after stashing and *Cube synthesis when the inventory is full* is ticked. After a run that combined nothing, it waits 10 minutes before trying again. It combines Lv.80~90 gear and materials only, so gear from low stages stays in your stash until you clear it. Items at or above the *Synthesize up to* grade are locked first and never combined, and neither are soulstones. To protect any other item, lock it yourself with ALT + left click; the bot keeps those locks.
 
 **The stash order changed after a synthesis.** That's the bot sorting it: it takes everything into the backpack, sorts it, and stashes it back from tab 1, so the best grades end up first.
 
