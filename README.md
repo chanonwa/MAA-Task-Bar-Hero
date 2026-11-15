@@ -6,7 +6,7 @@ This is [chanonwa](https://github.com/chanonwa)'s extended version of [Marcus-Xu
 
 ## What's new
 
-Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases)**; the latest is [1.5.2](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases/tag/v1.5.2).
+Each release lists what it adds. See **[Releases](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases)**; the latest is [1.6](https://github.com/chanonwa/MAA-Task-Bar-Hero/releases/tag/v1.6).
 
 ## Download and run
 
