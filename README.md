@@ -28,7 +28,7 @@ Chests come at about the same rate wherever you farm, roughly one blue every 5 m
 
 ## Plaguelands
 
-Tick *Plaguelands when Contamination is over half*. Every 10 minutes the bot reads Contamination on the PORTAL's Plaguelands tab. When it's over half, the bot enters at the hardest difficulty that has the tab and the highest Plague Intensity you've unlocked. Inside, it opens chests and stashes loot, and it saves boss runs for later. When the game sends you out at 0 Contamination, it goes back to the first stage of your farming cycle.
+Tick *Plaguelands when Contamination is over half* and pick the difficulty and Plague Intensity beside it. Every 10 minutes the bot reads Contamination on that difficulty's Plaguelands tab in the PORTAL. When it's over half, the bot sets the Plague Intensity and enters. *Hardest* is the hardest difficulty that has the tab, and *Highest* is the highest Plague Intensity you've unlocked there; a number above that uses your highest. Inside, it opens chests and stashes loot, and it saves boss runs for later. When the game sends you out at 0 Contamination, it goes back to the first stage of your farming cycle.
 
 If 15 minutes pass without a clear, it leaves and doesn't enter again until you restart the bot.
 
@@ -56,7 +56,7 @@ If 15 minutes pass without a clear, it leaves and doesn't enter again until you 
 
 **Adding templates.** A stage needs `templates/levels/level_<act>_<stage>.png`. A difficulty needs `templates/difficulty/anchor_difficulty_<name>.png`. Soulstones of all four difficulties are recognized by their icon (`soulstone_icon_templates`) and tooltip title (`soulstone_title_templates`) in `config.json`. The bot finds them in the stash and the backpack.
 
-**Reporting a problem.** Use **Export Debug ZIP** in the GUI and include the zip. It holds the logs and screenshots that show what the bot saw.
+**Reporting a problem.** Use **Export Debug ZIP** in the GUI and include the zip. It holds the logs and screenshots that show what the bot saw. The `logs` folder beside the app keeps a small stats file for each run, a few screenshots, and the full logs of the last 5 runs, even after the bot stops, and the zip includes them.
 
 ## Disclaimer
 

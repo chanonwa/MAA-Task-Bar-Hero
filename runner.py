@@ -3,10 +3,14 @@
 # Built with Codex as a coding assistant.
 # Shared for learning, experimentation, and automation research.
 
+from collections import Counter
+import functools
 import time
 import winsound
 import cv2
 import numpy as np
+from debug_files import LOGS_FOLDER_NAME
+from stats_log import StatsLog, archive_detail_log, build_time
 from vision import (
     find_window_by_title_keyword,
     capture_window,
@@ -108,6 +112,8 @@ from config import (
     get_base_dir,
     get_config,
     get_emergency_hotkey,
+    get_plaguelands_difficulty,
+    get_plaguelands_intensity,
     get_synthesis_cap_grade,
     get_effective_thresholds,
     get_recognition_mode,
@@ -684,10 +690,14 @@ CURRENT_STAGE_GREEN_MIN_PIXELS = 150
 CURRENT_STAGE_LABEL_MATCH_THRESHOLD = 0.75
 # PORTAL map area (below the act tabs) relative to the difficulty dropdown center.
 PORTAL_MAP_OFFSETS_FROM_DIFFICULTY_DROPDOWN = (-146, 56, 154, 366)
-# Plaguelands: when Contamination is over half, enter at the hardest difficulty with the tab
-# and the highest Plague Intensity unlocked, stay until the game forces the hero out at 0, then
-# go back to the first stage of the plan.
+# Plaguelands: when Contamination is over half, enter at the difficulty and Plague Intensity
+# chosen in the GUI, stay until the game forces the hero out at 0, then go back to the first
+# stage of the plan.
 PLAGUELANDS_ENABLED = env_flag("MAATBH_PLAGUELANDS", config_bool("plaguelands_enabled", False))
+# "hardest" is the first of PLAGUELANDS_DIFFICULTY_ORDER that shows the tab; "highest" is the
+# highest Plague Intensity unlocked.
+PLAGUELANDS_DIFFICULTY = get_plaguelands_difficulty(os.environ.get("MAATBH_PLAGUELANDS_DIFFICULTY"))
+PLAGUELANDS_INTENSITY = get_plaguelands_intensity(os.environ.get("MAATBH_PLAGUELANDS_INTENSITY"))
 PLAGUELANDS_MIN_CONTAMINATION_SHARE = config_non_negative_float("plaguelands_min_contamination_share", 0.5)
 PLAGUELANDS_CHECK_MINUTES = config_non_negative_float("plaguelands_check_minutes", 10)
 # With no CLEAR for this long the hero can't beat this Plague Intensity, so stop spending
@@ -696,12 +706,17 @@ PLAGUELANDS_NO_CLEAR_MINUTES = config_non_negative_float("plaguelands_no_clear_m
 PLAGUELANDS_DIFFICULTY_ORDER = ("torment", "hell", "nightmare")
 PLAGUELANDS_LABEL_TEMPLATE_PATH = "templates/general/plaguelands_contamination.png"
 PLAGUELANDS_BLUE_CHEST_TEMPLATE_PATH = "templates/general/chest_plaguelands_blue.png"
+PLAGUELANDS_COMMON_CHEST_TEMPLATE_PATH = "templates/general/chest_plaguelands_common.png"
 PLAGUELANDS_MATCH_THRESHOLD = 0.85
 PLAGUELANDS_TAB_OFFSET_FROM_DROPDOWN = (96, 36)
 # Relative to the "Contamination" label, which only shows on the Plaguelands tab.
-PLAGUELANDS_INTENSITY_UP_OFFSET = (24, -180)
+# The Plague Intensity arrows: (click point, region to read).
+PLAGUELANDS_INTENSITY_ARROWS = {
+    "down": ((-23, -180), (-27, -187, -18, -173)),
+    "up": ((24, -180), (19, -187, 28, -173)),
+}
+PLAGUELANDS_INTENSITY_NUMBER_REGION = (-15, -190, 16, -170)
 PLAGUELANDS_STAGE_DOT_OFFSET = (1, -100)
-PLAGUELANDS_INTENSITY_UP_REGION = (19, -187, 28, -173)
 PLAGUELANDS_STAGE_NAME_REGION = (-75, -82, 75, -67)
 PLAGUELANDS_BAR_REGION = (-127, 16, 128, 18)
 PLAGUELANDS_BAR_HSV_LOWER = (125, 60, 50)
@@ -710,11 +725,27 @@ PLAGUELANDS_ARROW_BRIGHT_HSV_LOWER = (0, 0, 190)
 PLAGUELANDS_ARROW_BRIGHT_HSV_UPPER = (180, 90, 255)
 PLAGUELANDS_ARROW_MIN_BRIGHT_PIXELS = 20
 PLAGUELANDS_STAGE_NAME_MIN_GREEN_PIXELS = 100
+PLAGUELANDS_NUMBER_CHANGED_PIXELS = 15
 PLAGUELANDS_MAX_INTENSITY_CLICKS = 30
 PLAGUELANDS_OUTSIDE_READS_TO_FINISH = 5
 PLAGUELANDS_CHEST_OPEN_COOLDOWN_SECONDS = 5.0
 PLAGUELANDS_TAB_RETRY_SECONDS = 10.0
+CHEST_BUBBLE_TEMPLATES = {
+    "blue": "templates/general/chest_blue.png",
+    "common": "templates/general/chest_brown.png",
+    "plague_blue": PLAGUELANDS_BLUE_CHEST_TEMPLATE_PATH,
+    "plague_common": PLAGUELANDS_COMMON_CHEST_TEMPLATE_PATH,
+    "act_boss": ACT_BOSS_CHEST_TEMPLATE,
+}
+CHEST_BUBBLE_MATCH_THRESHOLD = 0.8
+# A bubble's 10 queue squares, relative to its chest: two rows of five.
+CHEST_QUEUE_COLUMNS = (-12, -5, 2, 9, 16)
+CHEST_QUEUE_ROWS = (14, 20)
+CHEST_TOOLTIP_WAIT_SECONDS = 0.6
 last_contamination_check_at = 0
+plaguelands_started_at = 0
+plaguelands_clears = 0
+plaguelands_chest_opens = 0
 plaguelands_given_up = False
 plaguelands_difficulty = None
 plaguelands_last_clear_at = 0
@@ -749,6 +780,23 @@ coordinate_scaling_status = None
 ENABLE_BEEP = env_flag("MAATBH_ENABLE_BEEP", False)
 LOG_FILE_NAME = "detection_log.txt"
 LOG_FILE = get_base_dir() / LOG_FILE_NAME
+# One small line per game event, kept after the bot stops; see stats_log.py.
+stats = StatsLog(get_base_dir() / LOGS_FOLDER_NAME)
+STATS_SUMMARY_SECONDS = 600.0
+# The chest rule fitted from past logs. Nothing acts on it yet: the estimate is written beside
+# each clear so the next export can test it.
+BLUE_BUDGET_REFILL_SECONDS = 300.0
+BLUE_BUDGET_HOLDS = 2.0
+stats_budget = BLUE_BUDGET_HOLDS
+stats_budget_at = time.time()
+stats_last_clear_at = 0.0
+stats_last_blue_at = 0.0
+stats_last_common_at = 0.0
+stats_chores_ended_at = 0.0
+stats_chores_seconds = 0.0
+stats_frames = 0
+stats_summary_at = time.time()
+stats_tooltips_saved = set()
 HEARTBEAT_LOG_INTERVAL_SECONDS = 30.0
 ui_diagnostics_health_status = "UNKNOWN"
 ui_diagnostics_suggests_roi_retry = False
@@ -1375,6 +1423,7 @@ def log_app_start_boundary():
         "############################################################\n"
         "#################### MAA-TBH APP START ####################\n"
         f"version={APP_VERSION}\n"
+        f"build_time={build_time()}\n"
         f"timestamp={now_str()}\n"
         f"mode={get_runtime_mode()}\n"
         f"base_dir={get_base_dir()}\n"
@@ -1547,6 +1596,7 @@ def get_startup_template_specs():
     add_template_spec(specs, seen_paths, "general:panels_hidden_button", PANELS_HIDDEN_BUTTON_TEMPLATE_PATH)
     add_template_spec(specs, seen_paths, "general:plaguelands_contamination", PLAGUELANDS_LABEL_TEMPLATE_PATH)
     add_template_spec(specs, seen_paths, "general:plaguelands_blue_chest", PLAGUELANDS_BLUE_CHEST_TEMPLATE_PATH)
+    add_template_spec(specs, seen_paths, "general:plaguelands_common_chest", PLAGUELANDS_COMMON_CHEST_TEMPLATE_PATH)
     for name, path in (
         ("cube_title", CUBE_TITLE_TEMPLATE_PATH),
         ("cube_mode_synthesis", CUBE_MODE_SYNTHESIS_TEMPLATE_PATH),
@@ -1892,6 +1942,7 @@ def click_non_blue_box_once(hwnd, detections):
         f"region={best_box.get('region_name')}"
     )
 
+    queued = queued_chests(capture_window(hwnd))
     click_ok = open_queued_chests(hwnd, local_x, local_y, box_type)
 
     if not click_ok:
@@ -1901,6 +1952,7 @@ def click_non_blue_box_once(hwnd, detections):
         )
         return False
 
+    stats_common(queued)
     time.sleep(0.25)
     write_log(
         f"Same-level non-blue box click completed; staying on current route | "
@@ -2114,6 +2166,244 @@ def classify_best_blue_chest_candidate(detections):
     return classification
 
 
+def stats_guard(func):
+    """A stats line must never stop the bot."""
+    @functools.wraps(func)
+    def guarded(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            write_log(f"Stats skipped | {func.__name__} | {type(e).__name__}: {e}")
+            return None
+
+    return guarded
+
+
+def stage_label(route):
+    return f"{route['difficulty']} {route['level']}"
+
+
+def route_chest_level(route):
+    return get_chest_tier_for_route(route.get("difficulty"), route.get("chapter"), route.get("level"))
+
+
+def chest_queue_count(screenshot, center):
+    """
+    How many chests wait in a bubble. In each row of squares the filled ones are darker than
+    the empty ones; a row with no light square left is full. The bubble's own shade varies.
+    """
+    gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+    count = 0
+
+    for dy in CHEST_QUEUE_ROWS:
+        y = center[1] + dy
+        row = [float(gray[y - 1:y + 2, center[0] + dx - 1:center[0] + dx + 2].mean()) for dx in CHEST_QUEUE_COLUMNS]
+        lightest = max(row)
+        count += len(row) if lightest < 130 else sum(value < lightest - 30 for value in row)
+
+    return count
+
+
+@stats_guard
+def queued_chests(screenshot):
+    """{kind of chest: how many are queued} from the bubbles on screen."""
+    found = []
+
+    for region_name in ("battle_top", "battle_bottom"):
+        x1, y1, x2, y2 = REGIONS[region_name]
+        band = screenshot[y1:y2, x1:x2]
+
+        for kind, path in CHEST_BUBBLE_TEMPLATES.items():
+            match = match_template(band, load_template(path))
+
+            if match["confidence"] >= CHEST_BUBBLE_MATCH_THRESHOLD:
+                found.append((match["confidence"], kind, (x1 + match["center"][0], y1 + match["center"][1])))
+
+    # Bubbles share the same chest art, so one can match several templates: keep the strongest.
+    queued = {}
+    taken = []
+
+    for _confidence, kind, center in sorted(found, key=lambda item: item[0], reverse=True):
+        if all(abs(center[0] - x) >= 18 or abs(center[1] - y) >= 18 for x, y in taken):
+            taken.append(center)
+            queued[kind] = chest_queue_count(screenshot, center)
+
+    return queued
+
+
+def blue_budget_now(now):
+    return min(BLUE_BUDGET_HOLDS, stats_budget + (now - stats_budget_at) / BLUE_BUDGET_REFILL_SECONDS)
+
+
+@stats_guard
+def stats_clear(result, seen_at, reason=None, queued=None):
+    """One line per clear: blue, empty, or a chest that queued before this stage."""
+    global stats_budget, stats_budget_at, stats_last_clear_at, stats_last_blue_at
+
+    now = state_memory.post_clear_wait_started_at or seen_at
+    route = get_current_route()
+    budget = blue_budget_now(now)
+    stage = stage_label(route)
+    stats.write(
+        "clear",
+        stage=stage,
+        chest_level=route_chest_level(route),
+        result=result,
+        reason=reason,
+        clear_seconds=round(now - max(route_start_time, stats_last_clear_at), 1),
+        first_on_visit=stats_last_clear_at < route_start_time,
+        empty_clears_before=state_memory.no_chest_trial_count,
+        since_last_blue=round(now - stats_last_blue_at, 1) if stats_last_blue_at else None,
+        budget=round(budget, 2),
+        right_after_chores=now - stats_chores_ended_at < 3,
+        queued=queued,
+    )
+    stats.totals[f"{stage}: {result}"] += 1
+    stats_last_clear_at = now
+    stats_budget, stats_budget_at = budget, now
+
+    if result in ("blue", "queued_earlier"):
+        stats_budget = max(0.0, budget - 1)
+        stats_last_blue_at = now
+
+
+@stats_guard
+def stats_common(queued):
+    global stats_last_common_at
+
+    now = time.time()
+    route = get_current_route()
+    stats.write(
+        "common_opened",
+        stage=stage_label(route),
+        chest_level=route_chest_level(route),
+        queued=queued,
+        since_last_opening=round(now - stats_last_common_at, 1) if stats_last_common_at else None,
+    )
+    stats_last_common_at = now
+
+
+@stats_guard
+def stats_loot(context):
+    """What the backpack's visible slots hold before a stash pass: the loot of what just opened."""
+    screenshot = capture_window(GAME_HWND)
+    grades = Counter(item_grade(screenshot, center) for center in backpack_grid_centers(screenshot))
+    grades.pop(None, None)
+    stats.write("loot", context=context, stage=stage_label(get_current_route()), items=sum(grades.values()), grades=dict(grades))
+
+
+def stats_chore(event, seconds, **fields):
+    """Something that kept the bot from watching the battle, like a stash pass or a boss run."""
+    global stats_chores_ended_at, stats_chores_seconds
+
+    stats_chores_ended_at = time.time()
+    stats_chores_seconds += seconds
+    stats.write(event, seconds=round(seconds, 1), **fields)
+
+
+@stats_guard
+def save_chest_tooltip_once(detections):
+    """
+    On the first blue chest of each stage in a run, keep a picture of the bubble's tooltip,
+    which names the chest. It shows which chest level each stage really drops.
+    """
+    stage = stage_label(get_current_route())
+    blue = [d for d in detections if d["type"] == "blue"]
+
+    if stage in stats_tooltips_saved or not blue:
+        return
+
+    stats_tooltips_saved.add(stage)
+    best = max(blue, key=lambda d: d["confidence"])
+    _client_x, _client_y, screen_x, screen_y, _scaling = screenshot_local_to_click_coordinates(
+        GAME_HWND,
+        best["center_full"][0],
+        best["center_full"][1],
+        label="chest_tooltip",
+    )
+
+    if not input_controller.hover_screen_point(screen_x, screen_y, label="chest_tooltip"):
+        return
+
+    time.sleep(CHEST_TOOLTIP_WAIT_SECONDS)
+    picture = stats.save_picture(f"chest-{stage}", capture_window(GAME_HWND))
+    input_controller.rest_mouse(GAME_HWND, reason="chest_tooltip")
+    stats.write("chest_tooltip", stage=stage, picture=picture)
+
+
+@stats_guard
+def stats_move(from_route, to_route, reason, ok):
+    stats.write(
+        "move",
+        from_stage=stage_label(from_route) if from_route else None,
+        to_stage=stage_label(to_route),
+        reason=reason,
+        seconds=round(time.time() - route_start_time, 1),
+        ok=bool(ok),
+    )
+
+
+@stats_guard
+def stats_run_start():
+    left, top, right, bottom = win32gui.GetClientRect(GAME_HWND)
+    stats.write(
+        "run_start",
+        version=APP_VERSION,
+        build_time=build_time(),
+        plan=[stage_label(route) for route in ROUTE],
+        chest_levels=[route_chest_level(route) for route in ROUTE],
+        window=[right - left, bottom - top],
+        options={
+            "rune_of_opening": HAS_RUNE_OF_OPENING,
+            "boss_runs": USE_SOULSTONES_FOR_ACT_BOSSES,
+            "use_all_soulstones": ACT_BOSS_USE_ALL_SOULSTONES,
+            "boss_runs_per_chest": ACT_BOSS_MAX_ATTEMPTS,
+            "cube": AUTO_SYNTHESIS_ENABLED,
+            "cube_up_to": LOCKED_FROM_GRADE,
+            "stack_stash": STACK_STASH_AFTER_TRANSFER,
+            "plaguelands": PLAGUELANDS_ENABLED,
+            "plaguelands_difficulty": PLAGUELANDS_DIFFICULTY,
+            "plaguelands_intensity": PLAGUELANDS_INTENSITY,
+            "plaguelands_share": PLAGUELANDS_MIN_CONTAMINATION_SHARE,
+            "no_chest_retries": DEFAULT_NO_CHEST_RETRIES,
+        },
+    )
+
+
+@stats_guard
+def maybe_write_stats_summary(img, current_time):
+    """Running totals every few minutes, plus which panels show and how fast the bot looks at the game."""
+    global stats_frames, stats_summary_at, stats_chores_seconds
+
+    stats_frames += 1
+    elapsed = current_time - stats_summary_at
+
+    if elapsed < STATS_SUMMARY_SECONDS:
+        return
+
+    watching = max(0.0, elapsed - stats_chores_seconds)
+    stats.write(
+        "summary",
+        minutes=round(elapsed / 60, 1),
+        chores_seconds=round(stats_chores_seconds, 1),
+        looks_per_second=round(stats_frames / watching, 2) if watching else None,
+        state=bot_state,
+        stage=stage_label(get_current_route()),
+        budget=round(blue_budget_now(current_time), 2),
+        panels={
+            "hidden": find_template_center(img, PANELS_HIDDEN_BUTTON_TEMPLATE_PATH, PANELS_HIDDEN_BUTTON_MATCH_THRESHOLD) is not None,
+            "stash": stash_panel_is_open(img),
+            "hero": find_template_center(img, HERO_TITLE_TEMPLATE_PATH, MOUSE_REST_MATCH_THRESHOLD) is not None,
+            "portal": right_panel_center(img, "portal") is not None,
+            "cube": right_panel_center(img, "cube") is not None,
+        },
+        totals=dict(stats.totals),
+    )
+    stats_frames = 0
+    stats_chores_seconds = 0.0
+    stats_summary_at = current_time
+
+
 def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False):
     """
     Shared action once a blue drop is confirmed by normal or recovery logic.
@@ -2160,10 +2450,14 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
         winsound.Beep(2200, 250)
 
     opens_chest = ENABLE_CLICKING or AUTO_OPEN_CONFIRMED_BLUE_CHEST
+    confirmed_at = time.time()
+    queued = None
 
     if opens_chest:
         write_log("Blue drop confirmed. Opening blue chest before route advance.")
         time.sleep(1.0)
+        queued = queued_chests(capture_window(GAME_HWND))
+        save_chest_tooltip_once(detections)
 
         click_success = click_blue_chest_once(GAME_HWND, detections)
 
@@ -2194,7 +2488,10 @@ def handle_confirmed_blue_drop(detections, reason, details, allow_pre_boss=False
     # A one-stage plan stays put. A chest from before this stage doesn't count as this
     # stage's. A chest that didn't open stays queued and would read as a new chest on every
     # stage. In both cases the plan stays here too.
-    if len(ROUTE) == 1 or (opens_chest and (blue_chest_predates_stage() or blue_chest_still_queued())):
+    chest_predates_stage = opens_chest and blue_chest_predates_stage()
+    stats_clear("queued_earlier" if chest_predates_stage else "blue", confirmed_at, reason=reason, queued=queued)
+
+    if len(ROUTE) == 1 or chest_predates_stage or (opens_chest and blue_chest_still_queued()):
         if opens_chest:
             stash_and_fight_after_blue_chest()
 
@@ -2263,6 +2560,7 @@ def handle_clear_no_chest_trial(clear_conf):
         }
 
     state_memory.clear_handled_this_trial = True
+    stats_clear("empty", time.time())
     state_memory.no_chest_trial_count += 1
 
     no_chest_retries, max_trials, policy_source = get_no_chest_policy_for_current_route()
@@ -3118,6 +3416,8 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
         return False
 
     write_log(f"Stash stack pass started | context={context} | pages={pages}")
+    pass_started = time.time()
+    tab_items = {}
     stacked_pages = []
     completed = True
     backpack_has_items = press_stash_all and backpack_holds_items()
@@ -3193,7 +3493,8 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
                 set_protected_items_locked(stash_name, stash_grid_centers, True)
 
             # Stash All stops short of a full tab only when it has nothing left to move.
-            tab_full = count_items(capture_window(GAME_HWND), stash_grid_centers) >= STORAGE_GRID_ROWS * STORAGE_GRID_COLS
+            tab_items[stash_name] = count_items(capture_window(GAME_HWND), stash_grid_centers)
+            tab_full = tab_items[stash_name] >= STORAGE_GRID_ROWS * STORAGE_GRID_COLS
             backpack_has_items = tab_full and backpack_holds_items()
 
         if scan_here:
@@ -3205,7 +3506,17 @@ def run_stash_stack_pass(template, context, press_stash_all=True):
 
     write_log(
         f"Stash stack pass finished | context={context} | "
-        f"stacked={stacked_pages} | requested={pages} | items_left_in_backpack={backpack_has_items}"
+        f"stacked={stacked_pages} | requested={pages} | items_left_in_backpack={backpack_has_items} | "
+        f"tab_items={tab_items}"
+    )
+    stats_chore(
+        "stash",
+        time.time() - pass_started,
+        context=context,
+        tabs_pressed=len(stacked_pages),
+        tab_items=tab_items,
+        items_left=backpack_has_items,
+        completed=completed,
     )
 
     if scan_soulstones:
@@ -3438,6 +3749,15 @@ def record_soulstone_scan(found, context):
 
     soulstone_difficulties = set(soulstone_slots)
     soulstone_scan_time = time.time()
+
+    if found:
+        stats.write(
+            "soulstones",
+            context=context,
+            held=dict(Counter(difficulty for difficulty, _location, _slot in found)),
+            in_backpack=sum(location == "backpack" for _difficulty, location, _slot in found),
+        )
+
     write_log(
         f"Soulstone scan | context={context} | "
         f"difficulties={sorted(soulstone_difficulties) or 'none'}"
@@ -3683,6 +4003,7 @@ def run_act_boss_attempts_if_enabled():
         f"Act boss run started | soulstone_difficulties={difficulties} | "
         f"use_all_soulstones={ACT_BOSS_USE_ALL_SOULSTONES} | fight_limit={fight_limit}"
     )
+    run_started = time.time()
     attempts = 0
     results = []
 
@@ -3728,6 +4049,13 @@ def run_act_boss_attempts_if_enabled():
     write_log(
         f"Act boss run finished | attempts={attempts} | results={results or 'none'} | "
         f"soulstones_left={sorted(soulstone_difficulties) or 'none'}"
+    )
+    stats_chore(
+        "boss_run",
+        time.time() - run_started,
+        attempts=attempts,
+        results=results,
+        soulstones_left=sorted(soulstone_difficulties),
     )
 
     if attempts:
@@ -4493,6 +4821,8 @@ def run_auto_synthesis_if_inventory_full(context, stash_tabs_locked=False):
     else:
         set_all_protected_items_locked(True)
 
+    run_started = time.time()
+    by_category = {}
     synthesized = 0
     cube = switch_right_panel("cube")
 
@@ -4506,7 +4836,8 @@ def run_auto_synthesis_if_inventory_full(context, stash_tabs_locked=False):
             )
 
             for category in categories:
-                synthesized += synthesize_category(cube, category)
+                by_category[category] = synthesize_category(cube, category)
+                synthesized += by_category[category]
     finally:
         if switch_right_panel("portal") is None:
             write_log("WARNING: could not switch the right panel back to PORTAL")
@@ -4514,6 +4845,7 @@ def run_auto_synthesis_if_inventory_full(context, stash_tabs_locked=False):
 
     last_empty_synthesis_at = None if synthesized else time.time()
     write_log(f"Cube synthesis finished | synthesized={synthesized} | context={context}")
+    stats_chore("cube", time.time() - run_started, context=context, synthesized=synthesized, by_category=by_category)
     return synthesized > 0
 
 
@@ -4522,6 +4854,7 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
 
     write_log(f"Starting backpack-to-storage transfer | context={context}")
     time.sleep(wait_seconds)
+    stats_loot(context)
 
     template = load_backpack_to_storage_template(context)
 
@@ -4534,7 +4867,9 @@ def run_backpack_to_storage_transfer(context="blue_chest"):
 
     if run_auto_synthesis_if_inventory_full(context, stash_tabs_locked):
         # Synthesis freed stash space; sort the stash and the backpack together into it.
+        tidy_started = time.time()
         tidy_stash_after_synthesis()
+        stats_chore("tidy", time.time() - tidy_started)
 
     return transferred
 
@@ -7661,11 +7996,24 @@ def contamination_share(screenshot, label):
     return float(((purple > 0).mean(axis=0) > 0.5).mean())
 
 
-def plague_intensity_can_rise(screenshot, label):
-    """The up arrow is bright while a higher Plague Intensity is unlocked, and grey at the highest."""
-    arrow = cv2.cvtColor(crop_around(screenshot, label, PLAGUELANDS_INTENSITY_UP_REGION), cv2.COLOR_BGR2HSV)
-    bright = cv2.inRange(arrow, PLAGUELANDS_ARROW_BRIGHT_HSV_LOWER, PLAGUELANDS_ARROW_BRIGHT_HSV_UPPER)
+def plague_intensity_arrow_lit(screenshot, label, arrow):
+    """
+    The arrows beside the Plague Intensity are bright while it can move that way: down is
+    grey at 1, up is grey at the highest unlocked.
+    """
+    region = PLAGUELANDS_INTENSITY_ARROWS[arrow][1]
+    crop = cv2.cvtColor(crop_around(screenshot, label, region), cv2.COLOR_BGR2HSV)
+    bright = cv2.inRange(crop, PLAGUELANDS_ARROW_BRIGHT_HSV_LOWER, PLAGUELANDS_ARROW_BRIGHT_HSV_UPPER)
     return cv2.countNonZero(bright) >= PLAGUELANDS_ARROW_MIN_BRIGHT_PIXELS
+
+
+def plague_intensity_number(screenshot, label):
+    return cv2.cvtColor(crop_around(screenshot, label, PLAGUELANDS_INTENSITY_NUMBER_REGION), cv2.COLOR_BGR2GRAY)
+
+
+def plague_intensity_number_changed(before, screenshot, label):
+    changed = cv2.absdiff(before, plague_intensity_number(screenshot, label)) > 60
+    return cv2.countNonZero(changed.astype(np.uint8)) >= PLAGUELANDS_NUMBER_CHANGED_PIXELS
 
 
 def inside_plaguelands(screenshot, label):
@@ -7716,36 +8064,92 @@ def leave_plaguelands_tab():
     click_act_tab_by_position(GAME_HWND, capture_window(GAME_HWND), get_current_route()["chapter"])
 
 
-def raise_plague_intensity(label):
-    """Click the up arrow until it turns grey: the highest Plague Intensity unlocked."""
-    for _ in range(PLAGUELANDS_MAX_INTENSITY_CLICKS):
-        if not plague_intensity_can_rise(capture_window(GAME_HWND), label):
-            return
+def press_plague_intensity_arrow(label, arrow, steps=PLAGUELANDS_MAX_INTENSITY_CLICKS):
+    """
+    Press an arrow until it turns grey or the Plague Intensity has moved `steps` times. A step
+    counts once the number changes: the first click on an inactive window only activates it.
+    Returns the steps moved.
+    """
+    offset = PLAGUELANDS_INTENSITY_ARROWS[arrow][0]
+    moved = 0
 
+    for _ in range(PLAGUELANDS_MAX_INTENSITY_CLICKS):
+        screenshot = capture_window(GAME_HWND)
+
+        if moved >= steps or not plague_intensity_arrow_lit(screenshot, label, arrow):
+            break
+
+        before = plague_intensity_number(screenshot, label)
         click_window_point(
             GAME_HWND,
-            label[0] + PLAGUELANDS_INTENSITY_UP_OFFSET[0],
-            label[1] + PLAGUELANDS_INTENSITY_UP_OFFSET[1],
-            label="plague_intensity_up",
+            label[0] + offset[0],
+            label[1] + offset[1],
+            label=f"plague_intensity_{arrow}",
             settle_seconds=0,
         )
-        time.sleep(0.25)
+
+        if wait_for_screen(lambda s: plague_intensity_number_changed(before, s, label), 1.0)[0]:
+            moved += 1
+
+    return moved
 
 
-def start_plaguelands_run(difficulty, reason):
+def set_plague_intensity(label):
+    """
+    Set the Plague Intensity chosen in the GUI. The highest: press up until the arrow turns
+    grey. A number: press down to 1, then up to the number, or to the highest unlocked below
+    it. Returns the intensity, or None for the highest, whose number the bot can't read.
+    """
+    if PLAGUELANDS_INTENSITY == "highest":
+        moved = press_plague_intensity_arrow(label, "up")
+        write_log(f"Plague Intensity set to the highest unlocked | steps_up={moved}")
+        return None
+
+    wanted = int(PLAGUELANDS_INTENSITY)
+    moved_down = press_plague_intensity_arrow(label, "down")
+    intensity = 1 + press_plague_intensity_arrow(label, "up", wanted - 1)
+    write_log(
+        f"Plague Intensity set | wanted={wanted} | set={intensity} | steps_down={moved_down}"
+        + (" | the highest unlocked is lower" if intensity < wanted else "")
+    )
+    return intensity
+
+
+@stats_guard
+def stats_plague_start(difficulty, reason, intensity):
+    """The picture shows the Plague Intensity and Contamination as the game prints them."""
+    screenshot = capture_window(GAME_HWND)
+    label = plaguelands_label_center(screenshot)
+    stats.write(
+        "plague_start",
+        difficulty=difficulty,
+        reason=reason,
+        intensity=intensity,
+        intensity_choice=PLAGUELANDS_INTENSITY,
+        share=round(contamination_share(screenshot, label), 3) if label is not None else None,
+        picture=stats.save_picture("plaguelands-start", screenshot),
+    )
+
+
+def start_plaguelands_run(difficulty, reason, intensity=None):
     global bot_state, plaguelands_difficulty, plaguelands_last_clear_at, plaguelands_outside_reads
+    global plaguelands_started_at, plaguelands_clears, plaguelands_chest_opens
 
     bot_state = STATE_PLAGUELANDS
     plaguelands_difficulty = difficulty
     plaguelands_last_clear_at = time.time()
     plaguelands_outside_reads = 0
+    plaguelands_started_at = time.time()
+    plaguelands_clears = 0
+    plaguelands_chest_opens = 0
     reset_no_chest_trial_count("plaguelands_run")
     reset_route_detection_memory()
     write_log(f"Plaguelands run started | difficulty={difficulty} | reason={reason}")
+    stats_plague_start(difficulty, reason, intensity)
 
 
 def enter_plaguelands(difficulty, label):
-    raise_plague_intensity(label)
+    intensity = set_plague_intensity(label)
 
     for attempt in (1, 2):
         click_window_point(
@@ -7757,7 +8161,7 @@ def enter_plaguelands(difficulty, label):
         )
 
         if wait_for_screen(lambda s: inside_plaguelands(s, label), 3.0)[0]:
-            start_plaguelands_run(difficulty, "Contamination over the limit")
+            start_plaguelands_run(difficulty, "Contamination over the limit", intensity)
             return True
 
     write_log(f"Plaguelands: pressed the stage but the game didn't enter it | difficulty={difficulty}")
@@ -7781,8 +8185,9 @@ def maybe_enter_plaguelands():
         return False
 
     last_contamination_check_at = time.time()
+    difficulties = PLAGUELANDS_DIFFICULTY_ORDER if PLAGUELANDS_DIFFICULTY == "hardest" else (PLAGUELANDS_DIFFICULTY,)
 
-    for difficulty in PLAGUELANDS_DIFFICULTY_ORDER:
+    for difficulty in difficulties:
         label = open_plaguelands_tab(difficulty)
 
         if label is not None:
@@ -7791,6 +8196,7 @@ def maybe_enter_plaguelands():
                 f"Contamination check | difficulty={difficulty} | share={share:.3f} | "
                 f"needs_over={PLAGUELANDS_MIN_CONTAMINATION_SHARE:.3f}"
             )
+            stats.write("contamination", difficulty=difficulty, share=round(share, 3), needs_over=PLAGUELANDS_MIN_CONTAMINATION_SHARE)
 
             if share > PLAGUELANDS_MIN_CONTAMINATION_SHARE and enter_plaguelands(difficulty, label):
                 return True
@@ -7799,7 +8205,7 @@ def maybe_enter_plaguelands():
             return False
 
     plaguelands_given_up = True
-    write_log("Plaguelands: no difficulty shows the Plaguelands tab; not checking again this run")
+    write_log(f"Plaguelands: no Plaguelands tab on {', '.join(difficulties)}; not checking again this run")
     return False
 
 
@@ -7823,6 +8229,13 @@ def finish_plaguelands_run(reason):
     global current_route_index, last_contamination_check_at
 
     write_log(f"Plaguelands run finished | reason={reason}; back to the first stage of the plan")
+    stats.write(
+        "plague_end",
+        reason=reason,
+        minutes=round((time.time() - plaguelands_started_at) / 60, 1),
+        clears_seen=plaguelands_clears,
+        chest_openings=plaguelands_chest_opens,
+    )
     current_route_index = 0
     last_contamination_check_at = time.time()
     clear_active_same_tier_substitute("plaguelands_run_finished")
@@ -7832,7 +8245,7 @@ def finish_plaguelands_run(reason):
 
 def open_plaguelands_chests(detections, screenshot):
     """Open what has queued and stash it. Plaguelands chests have bubbles of their own."""
-    global plaguelands_last_chest_open_at
+    global plaguelands_last_chest_open_at, plaguelands_chest_opens
 
     now = time.time()
 
@@ -7846,6 +8259,8 @@ def open_plaguelands_chests(detections, screenshot):
         return
 
     plaguelands_last_chest_open_at = now
+    plaguelands_chest_opens += 1
+    stats.write("plague_chests", queued=queued_chests(screenshot))
     open_queued_chests(GAME_HWND, chest[0], chest[1], "plaguelands")
     time.sleep(0.25)
     try_move_backpack_to_storage_after_blue_chest()
@@ -7854,6 +8269,7 @@ def open_plaguelands_chests(detections, screenshot):
 def run_plaguelands_tick(img, detections, clear_visible):
     """One look at the game during a Plaguelands run: watch for its end, open chests, stash."""
     global plaguelands_given_up, plaguelands_last_clear_at, plaguelands_outside_reads, plaguelands_last_tab_try_at
+    global plaguelands_clears
 
     info = {
         "state": bot_state,
@@ -7867,6 +8283,8 @@ def run_plaguelands_tick(img, detections, clear_visible):
     if clear_visible:
         if now - plaguelands_last_clear_at > 30:
             write_log(f"Plaguelands stage cleared | seconds_since_last={now - plaguelands_last_clear_at:.0f}")
+            plaguelands_clears += 1
+            stats.write("plague_clear", seconds=round(now - plaguelands_last_clear_at, 1))
 
         plaguelands_last_clear_at = now
 
@@ -7924,6 +8342,7 @@ def navigate_to_startup_route():
     )
 
     success = navigate_to_current_route_if_enabled()
+    stats_move(None, route, "startup", success)
 
     if success:
         reset_route_detection_memory()
@@ -8052,6 +8471,7 @@ def advance_route(do_navigation=False, reason="unknown"):
         navigation_ok = navigate_to_current_route_if_enabled(
             moving_to_another_stage=route_identity(route) != route_identity(previous_route)
         )
+        stats_move(previous_route, route, reason, navigation_ok)
 
         if not navigation_ok:
             if bot_state == STATE_NAVIGATION_FAILED:
@@ -8380,6 +8800,7 @@ def main():
         f"clear_match={CLEAR_MATCH_THRESHOLD}"
     )
     log_ui_coordinate_diagnostics(hwnd, title)
+    stats_run_start()
 
     safe_print("Loading templates...")
 
@@ -8512,6 +8933,7 @@ def main():
             }
 
         maybe_log_heartbeat(current_time, bot_info)
+        maybe_write_stats_summary(img, current_time)
         print_bot_status_on_change(bot_info)
 
         debug_img = draw_regions(img)
@@ -8600,6 +9022,7 @@ def run_main_with_fatal_logging():
         write_log("Another bot is already running; this copy exits without touching the game.")
         sys.exit(1)
 
+    archive_detail_log(LOG_FILE, get_base_dir() / LOGS_FOLDER_NAME)
     start_emergency_key_watch()
 
     try:

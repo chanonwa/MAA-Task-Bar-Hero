@@ -13,6 +13,10 @@ except Exception:
     DEFAULT_CONFIG = {}
 
 
+LOGS_FOLDER_NAME = "logs"
+# The bot's own files in it. Anything else, like a Debug ZIP saved there, stays out of the
+# export: a zip being written into that folder would otherwise pack itself.
+LOGS_FOLDER_EXPORT_PATTERNS = ("stats-*.jsonl", "detail-*.txt", "*.png")
 GUI_CONSOLE_ARCNAME = "bot_console_current_session.txt"
 DISK_BOT_CONSOLE_ARCNAME = "bot_console_disk_current_session.txt"
 
@@ -21,7 +25,7 @@ SESSION_MARKERS = {
     "bot_console.log": "=== Bot process started ===",
 }
 
-TAIL_BYTES = 2 * 1024 * 1024
+TAIL_BYTES = 16 * 1024 * 1024
 
 SIGNIFICANT_ERROR_MARKERS = [
     "FATAL EXCEPTION",
@@ -859,6 +863,17 @@ def export_debug_zip(
                 "reason": fallback["reason"],
             }
 
+        # The logs folder: every run's stats and pictures, and the full logs of the last few runs.
+        logs_dir = base_dir / LOGS_FOLDER_NAME
+
+        if logs_dir.is_dir():
+            for path in sorted(logs_dir.iterdir()):
+                if path.is_file() and any(path.match(pattern) for pattern in LOGS_FOLDER_EXPORT_PATTERNS):
+                    arcname = f"{LOGS_FOLDER_NAME}/{path.name}"
+                    zipf.write(path, arcname)
+                    included.append(arcname)
+                    included_metadata[arcname] = {"size": path.stat().st_size, "source": "disk"}
+
         screenshot_notes = build_screenshot_notes(
             export_capture_result,
             latest_raw_included,
@@ -1085,9 +1100,9 @@ def build_manifest(
 
 
 def generated_debug_paths(base_dir):
+    # detection_log.txt isn't one of them: the next bot start moves it to the logs folder.
     base_dir = Path(base_dir)
     paths = [
-        base_dir / "detection_log.txt",
         base_dir / "bot_console.log",
     ]
     debug_dir = get_debug_dir(base_dir)

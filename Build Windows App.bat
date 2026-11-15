@@ -10,6 +10,13 @@ if exist "C:\ProgramData\anaconda3\python.exe" (
     set PYTHON_EXE=py -3
 )
 
+rem A rebuild empties the app folder. Keep the run logs, but out of the zip for other users.
+if exist "dist\%APP_NAME%\logs" (
+    if exist "build\kept_logs" rmdir /s /q "build\kept_logs"
+    if not exist "build" mkdir "build"
+    move "dist\%APP_NAME%\logs" "build\kept_logs" >nul
+)
+
 %PYTHON_EXE% -m pip install -r requirements.txt
 %PYTHON_EXE% -m PyInstaller ^
     --noconfirm ^
@@ -81,6 +88,8 @@ if not "%ZIP_OK%"=="1" (
     pause
     exit /b 1
 )
+
+if exist "build\kept_logs" move "build\kept_logs" "dist\%APP_NAME%\logs" >nul
 
 echo.
 echo Build complete. Test locally:

@@ -24,6 +24,7 @@ dist/
 debug/
 debug_screenshots/
 logs/
+log/
 *.log
 detection_log.txt
 bot_console_current_session.txt

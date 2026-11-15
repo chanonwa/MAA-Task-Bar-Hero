@@ -161,6 +161,8 @@ DEFAULT_CONFIG = {
     "auto_synthesis_up_to_grade": "arcana",
     "auto_synthesis_retry_minutes": 10,
     "plaguelands_enabled": False,
+    "plaguelands_difficulty": "hardest",
+    "plaguelands_intensity": "highest",
     "plaguelands_min_contamination_share": 0.5,
     "plaguelands_check_minutes": 10,
     "plaguelands_no_clear_minutes": 15,
@@ -414,6 +416,30 @@ def get_synthesis_cap_grade(value=None):
 
     value = str(value).strip().lower()
     return value if value in SYNTHESIS_CAP_GRADES else "arcana"
+
+
+# Plaguelands difficulty: one with the tab (Normal has none), or the hardest that has it.
+PLAGUELANDS_DIFFICULTY_CHOICES = ("hardest", "torment", "hell", "nightmare")
+# Plague Intensity: a number, or the highest unlocked. A number above that uses the highest.
+PLAGUELANDS_INTENSITY_CHOICES = ("highest",) + tuple(str(level) for level in range(1, 21))
+
+
+def get_plaguelands_difficulty(value=None):
+    """The Plaguelands difficulty from a GUI/env value or config.json (default the hardest)."""
+    if value is None:
+        value = get_config().get("plaguelands_difficulty", "hardest")
+
+    value = str(value).strip().lower()
+    return value if value in PLAGUELANDS_DIFFICULTY_CHOICES else "hardest"
+
+
+def get_plaguelands_intensity(value=None):
+    """The Plague Intensity from a GUI/env value or config.json (default the highest unlocked)."""
+    if value is None:
+        value = get_config().get("plaguelands_intensity", "highest")
+
+    value = str(value).strip().lower()
+    return value if value in PLAGUELANDS_INTENSITY_CHOICES else "highest"
 
 
 # Emergency stop hotkey modifiers: name -> (RegisterHotKey flag, virtual-key codes).

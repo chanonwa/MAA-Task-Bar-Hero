@@ -24,10 +24,14 @@ from config import (
     CONFIG_FILE_NAME,
     EMERGENCY_HOTKEY_MODIFIERS,
     EMERGENCY_STOP_EXIT_CODE,
+    PLAGUELANDS_DIFFICULTY_CHOICES,
+    PLAGUELANDS_INTENSITY_CHOICES,
     SYNTHESIS_CAP_GRADES,
     get_base_dir,
     get_config,
     get_emergency_hotkey,
+    get_plaguelands_difficulty,
+    get_plaguelands_intensity,
     get_synthesis_cap_grade,
 )
 from debug_files import (
@@ -225,6 +229,8 @@ class RoutePlannerApp:
         self.plaguelands_var = tk.BooleanVar(
             value=config_bool_value("plaguelands_enabled", False)
         )
+        self.plaguelands_difficulty_var = tk.StringVar(value=get_plaguelands_difficulty().title())
+        self.plaguelands_intensity_var = tk.StringVar(value=get_plaguelands_intensity().title())
         self.same_tier_substitution_var = tk.BooleanVar(
             value=config_bool_value("same_tier_substitution_enabled", True)
         )
@@ -397,12 +403,6 @@ class RoutePlannerApp:
 
         tk.Checkbutton(
             options,
-            text="Plaguelands when Contamination is over half",
-            variable=self.plaguelands_var,
-        ).grid(row=len(option_columns[1]), column=1, sticky="w", padx=(0, 12), pady=2)
-
-        tk.Checkbutton(
-            options,
             text="Cube synthesis when the inventory is full",
             variable=self.auto_synthesis_var,
             command=self.update_synthesis_cap_state,
@@ -420,6 +420,34 @@ class RoutePlannerApp:
         self.synthesis_cap_menu.configure(width=9, pady=0, highlightthickness=0)
         self.synthesis_cap_menu.grid(row=0, column=1, sticky="w")
         self.update_synthesis_cap_state()
+
+        # Plaguelands on the row under it, with its difficulty and Plague Intensity beside it.
+        tk.Checkbutton(
+            options,
+            text="Plaguelands when Contamination is over half",
+            variable=self.plaguelands_var,
+            command=self.update_plaguelands_options_state,
+        ).grid(row=len(option_columns[0]) + 2, column=0, sticky="w", padx=(0, 12), pady=2)
+
+        plaguelands_options = tk.Frame(options)
+        plaguelands_options.grid(row=len(option_columns[0]) + 2, column=1, sticky="w", pady=2)
+        tk.Label(plaguelands_options, text="Difficulty:").grid(row=0, column=0, sticky="w", padx=(4, 2))
+        self.plaguelands_difficulty_menu = tk.OptionMenu(
+            plaguelands_options,
+            self.plaguelands_difficulty_var,
+            *[choice.title() for choice in PLAGUELANDS_DIFFICULTY_CHOICES],
+        )
+        self.plaguelands_difficulty_menu.configure(width=9, padx=2, pady=0, highlightthickness=0)
+        self.plaguelands_difficulty_menu.grid(row=0, column=1, sticky="w")
+        tk.Label(plaguelands_options, text="Intensity:").grid(row=0, column=2, sticky="w", padx=(6, 2))
+        self.plaguelands_intensity_menu = tk.OptionMenu(
+            plaguelands_options,
+            self.plaguelands_intensity_var,
+            *[choice.title() for choice in PLAGUELANDS_INTENSITY_CHOICES],
+        )
+        self.plaguelands_intensity_menu.configure(width=7, padx=2, pady=0, highlightthickness=0)
+        self.plaguelands_intensity_menu.grid(row=0, column=3, sticky="w")
+        self.update_plaguelands_options_state()
 
         tk.Label(
             control_frame,
@@ -697,6 +725,12 @@ class RoutePlannerApp:
         # The grade cap only matters while Cube synthesis is on.
         self.synthesis_cap_menu.configure(state="normal" if self.auto_synthesis_var.get() else "disabled")
 
+    def update_plaguelands_options_state(self):
+        # The difficulty and Plague Intensity only matter while Plaguelands is on.
+        state = "normal" if self.plaguelands_var.get() else "disabled"
+        self.plaguelands_difficulty_menu.configure(state=state)
+        self.plaguelands_intensity_menu.configure(state=state)
+
     def update_boss_run_count_state(self):
         # With "Use all soulstones" ticked the run count does not apply.
         self.boss_runs_entry.configure(state="disabled" if self.boss_use_all_var.get() else "normal")
@@ -740,6 +774,8 @@ class RoutePlannerApp:
         config["auto_synthesis_enabled"] = bool(self.auto_synthesis_var.get())
         config["auto_synthesis_up_to_grade"] = get_synthesis_cap_grade(self.synthesis_cap_var.get())
         config["plaguelands_enabled"] = bool(self.plaguelands_var.get())
+        config["plaguelands_difficulty"] = get_plaguelands_difficulty(self.plaguelands_difficulty_var.get())
+        config["plaguelands_intensity"] = get_plaguelands_intensity(self.plaguelands_intensity_var.get())
 
         try:
             config["act_boss_max_attempts"] = max(1, int(self.boss_runs_var.get().strip()))
@@ -941,6 +977,8 @@ class RoutePlannerApp:
             env["MAATBH_AUTO_SYNTHESIS"] = "1" if self.auto_synthesis_var.get() else "0"
             env["MAATBH_AUTO_SYNTHESIS_UP_TO"] = get_synthesis_cap_grade(self.synthesis_cap_var.get())
             env["MAATBH_PLAGUELANDS"] = "1" if self.plaguelands_var.get() else "0"
+            env["MAATBH_PLAGUELANDS_DIFFICULTY"] = get_plaguelands_difficulty(self.plaguelands_difficulty_var.get())
+            env["MAATBH_PLAGUELANDS_INTENSITY"] = get_plaguelands_intensity(self.plaguelands_intensity_var.get())
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             self.write_bot_console_log(f"=== Recognition mode: {GUI_RECOGNITION_MODE} ===\n")
@@ -965,6 +1003,10 @@ class RoutePlannerApp:
             )
             self.write_bot_console_log(
                 f"=== Plaguelands when Contamination is over half: {'on' if self.plaguelands_var.get() else 'off'} ===\n"
+            )
+            self.write_bot_console_log(
+                f"=== Plaguelands difficulty: {get_plaguelands_difficulty(self.plaguelands_difficulty_var.get()).title()} | "
+                f"Plague Intensity: {get_plaguelands_intensity(self.plaguelands_intensity_var.get()).title()} ===\n"
             )
             bot_command = (
                 [sys.executable, "--bot"]

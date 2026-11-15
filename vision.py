@@ -733,17 +733,13 @@ def get_expanded_roi_retry_reason():
     return ",".join(reasons)
 
 
-def log_expanded_roi_retry_start(label, template_path, original_roi, expanded_roi, reason):
-    _write_log(
-        f"ROI retry start | target={label} | template={template_path} | "
-        f"original_roi={original_roi} | expanded_roi={expanded_roi} | reason={reason}"
-    )
-
-
 def log_expanded_roi_retry_result(label, found, confidence, threshold):
-    status = "found candidate" if found else "failed"
+    # A retry that finds nothing is routine on every anchor check, so only a find is worth a line.
+    if not found:
+        return
+
     _write_log(
-        f"ROI retry {status} | target={label} | "
+        f"ROI retry found candidate | target={label} | "
         f"best_confidence={confidence:.2f} | threshold={threshold:.2f}"
     )
 
@@ -982,13 +978,6 @@ def find_template_in_box(img, template_path, region, threshold, label="custom_re
                 and original_region is not None
                 and not regions_equal(expanded_region, original_region)
             ):
-                log_expanded_roi_retry_start(
-                    label,
-                    template_path,
-                    original_region,
-                    expanded_region,
-                    retry_reason,
-                )
                 expanded_img = crop(img, expanded_region)
 
                 if expanded_img is not None:
@@ -1101,13 +1090,6 @@ def find_template_candidates_in_box(
                 and original_region is not None
                 and not regions_equal(expanded_region, original_region)
             ):
-                log_expanded_roi_retry_start(
-                    label,
-                    template_path,
-                    original_region,
-                    expanded_region,
-                    retry_reason,
-                )
                 expanded_img = crop(img, expanded_region)
 
                 if expanded_img is not None:
@@ -1873,16 +1855,8 @@ def detect_level_in_map(
         if retry_reason is not None:
             expanded_region = expand_region_for_retry(img, search_region)
             target_name = route.get("level") if route else "level"
-            template_name = route.get("level_template", "level_template") if route else "level_template"
 
             if expanded_region is not None and not regions_equal(expanded_region, search_region):
-                log_expanded_roi_retry_start(
-                    f"level:{target_name}:{context}",
-                    template_name,
-                    search_region,
-                    expanded_region,
-                    retry_reason,
-                )
                 expanded_img = crop(img, expanded_region)
 
                 if expanded_img is not None:
