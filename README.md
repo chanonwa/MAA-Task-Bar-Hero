@@ -28,7 +28,7 @@ Chests come at about the same rate wherever you farm, roughly one blue every 5 m
 
 ## Plaguelands
 
-Tick *Plaguelands when Contamination is over half* and pick the difficulty and Plague Intensity beside it. Every 10 minutes the bot reads Contamination on that difficulty's Plaguelands tab in the PORTAL. When it's over half, the bot sets the Plague Intensity and enters. *Hardest* is the hardest difficulty that has the tab, and *Highest* is the highest Plague Intensity you've unlocked there; a number above that uses your highest. Inside, it opens chests and stashes loot, and it saves boss runs for later. When the game sends you out at 0 Contamination, it goes back to the first stage of your farming cycle.
+Tick *Plaguelands when Contamination is over half* and pick the difficulty and Plague Intensity beside it. Every 10 minutes the bot reads Contamination on that difficulty's Plaguelands tab in the PORTAL. When it's over half, the bot sets the Plague Intensity and enters. *Hardest* is the hardest difficulty that has the tab, and *Highest* is the highest Plague Intensity you've unlocked there. If the difficulty you pick has no Plaguelands tab yet, the bot uses the hardest one that does, and a Plague Intensity above your highest uses your highest. Inside, it opens chests and stashes loot, and it saves boss runs for later. When the game sends you out at 0 Contamination, it goes back to the first stage of your farming cycle.
 
 If 15 minutes pass without a clear, it leaves and doesn't enter again until you restart the bot.
 

@@ -8124,6 +8124,7 @@ def stats_plague_start(difficulty, reason, intensity):
         "plague_start",
         difficulty=difficulty,
         reason=reason,
+        difficulty_choice=PLAGUELANDS_DIFFICULTY,
         intensity=intensity,
         intensity_choice=PLAGUELANDS_INTENSITY,
         share=round(contamination_share(screenshot, label), 3) if label is not None else None,
@@ -8168,6 +8169,15 @@ def enter_plaguelands(difficulty, label):
     return False
 
 
+def plaguelands_difficulties_to_try():
+    """
+    The chosen difficulty first. Guardrail: when it shows no Plaguelands tab (not unlocked
+    yet), the hardest difficulty that does.
+    """
+    others = [difficulty for difficulty in PLAGUELANDS_DIFFICULTY_ORDER if difficulty != PLAGUELANDS_DIFFICULTY]
+    return others if PLAGUELANDS_DIFFICULTY == "hardest" else [PLAGUELANDS_DIFFICULTY] + others
+
+
 def maybe_enter_plaguelands():
     """
     Every few minutes, read Contamination on the PORTAL's Plaguelands tab and enter when it
@@ -8185,10 +8195,13 @@ def maybe_enter_plaguelands():
         return False
 
     last_contamination_check_at = time.time()
-    difficulties = PLAGUELANDS_DIFFICULTY_ORDER if PLAGUELANDS_DIFFICULTY == "hardest" else (PLAGUELANDS_DIFFICULTY,)
+    difficulties = plaguelands_difficulties_to_try()
 
     for difficulty in difficulties:
         label = open_plaguelands_tab(difficulty)
+
+        if label is None and difficulty == PLAGUELANDS_DIFFICULTY:
+            write_log(f"Plaguelands: {difficulty}, the difficulty chosen, shows no Plaguelands tab; using the hardest that does")
 
         if label is not None:
             share = contamination_share(capture_window(GAME_HWND), label)
